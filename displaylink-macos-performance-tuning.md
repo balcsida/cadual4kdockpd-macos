@@ -1,6 +1,6 @@
-# DisplayLink Hidden Settings & Architecture (macOS + Linux)
+# DisplayLink Hidden Settings & Architecture (macOS + Linux + Windows)
 
-Undocumented preferences and internal architecture of DisplayLink drivers, reverse-engineered from macOS binary (v15.1.0) and Linux driver (v6.2.0-30). Key settings verified via Ghidra disassembly.
+Undocumented preferences and internal architecture of DisplayLink drivers, reverse-engineered from macOS binary (v15.1.0), Linux driver (v6.2.0-30), and Windows driver (v12.2.1977.0). Key settings verified via Ghidra disassembly.
 
 Tested on: **Apple M3 Max, macOS Tahoe 26.4, DisplayLink Manager 15.1.0, DisplayLink USB-C Dual-4K Dock (GenesysLogic GL352x hub, FW 0x9305), 2x HP E273 (1080p @ 60Hz)**
 
@@ -121,6 +121,99 @@ All other settings require an app restart to take effect.
 
 ---
 
+## Cross-Platform: XML Config Keys (`.dlua.xml` / `.dl.xml`)
+
+These are **shared C++ core settings** used by all platforms. They live in a `DL_HIVE` XML config file, separate from `NSUserDefaults`.
+
+**macOS location:** `~/Library/Group Containers/73YQY62QM3.com.displaylink.DisplayLinkShared/Library/Application Support/Logs/.dlua.xml`
+**Linux location:** `/var/log/displaylink/.dl.xml`
+**Windows:** Windows Registry under `HKEY_LOCAL_MACHINE\Software\DisplayLink\`
+
+The XML path follows: `DL_HIVE > HKEY_LOCAL_MACHINE > Software > DisplayLink > ...`
+
+### Confirmed present in macOS binary (potential tunables)
+
+These keys were found in both the Linux `DisplayLinkManager` binary AND the macOS `DisplayLinkUserAgent` binary, confirming the shared C++ core reads them:
+
+| Key | XML Path (under `DisplayLink/`) | Description | Potential impact |
+|---|---|---|---|
+| `ExtraModes` | `DisplayLinkManager/Configurations/<monitor>/Viewer/NivoSettings/ExtraModes` | Additional display modes beyond EDID | Could unlock more resolutions |
+| `WindowSize` | `Core/WindowSize` | USB transfer window size | Larger = more throughput, more latency |
+| `BandwidthAllocator` | `Core/BandwidthAllocator` | How USB bandwidth is split across displays | Could improve multi-display performance |
+| `SessionStartDelay` | Connection auth path | Delay before HDCP session start | Lower = faster display activation |
+| `LcTimeout` | HDCP locality check | Timeout for HDCP locality check | Faster display connection |
+| `DeviceOverrides` | `DisplayLinkManager/DeviceOverrides` | Per-device config (next to `ConnectionTypes`, `NivoManager`) | Device-specific tuning |
+| `MaskProtocolErrors` | USB transport layer | Mask/ignore protocol errors | Could reduce flickering from transient USB errors |
+| `PnpSettings` | `DisplayLinkManager/PnpSettings` | Plug-and-play behavior config | |
+| `PersistentDisplaysSettings` | `DisplayLinkManager/PersistentDisplaysSettings` | Persistent display configs | |
+| `ContentHint` | Per-display `Viewer/ContentHint` | Content optimization hint | Only `Auto` confirmed on macOS; Linux has `Game`/`Cinema`/`Photo`/`Graphics` |
+
+### Per-display Viewer settings (already in `.dlua.xml`)
+
+These are per-monitor settings under each `Configurations/<monitor-serial>/Viewer/` node:
+
+| Key | Current value | Other known values |
+|---|---|---|
+| `Type` | `NivoViewer` | — |
+| `Rotation` | `0` | 0, 90, 180, 270 |
+| `ContentHint` | `Auto` | `Game`, `Cinema`, `Photo`, `Graphics` (Linux-only?) |
+| `AdjustedDisplayMode/AdjustedMode` | `0x0x0@0` | `<width>x<height>x<depth>@<freq>` |
+| `AntiAutoAdjustingBorder/Colour` | `0` | Border color |
+| `AntiAutoAdjustingBorder/Thickness_H` | `0` | Horizontal border thickness |
+| `AntiAutoAdjustingBorder/Thickness_V` | `0` | Vertical border thickness |
+
+### Logger configuration (can be added to `.dlua.xml`)
+
+Based on the Linux `DLSupportTool.sh --debug` implementation, this XML structure enables debug logging. **Untested on macOS** — the encrypted `.log` files suggest macOS may encrypt output, but this config might enable plaintext logging:
+
+```xml
+<!-- Add under HKEY_LOCAL_MACHINE/Software/DisplayLink/ -->
+<node name="DisplayLinkManager">
+    <node name="Logger">
+        <node name="Modules">
+            <node name="connBandwidth"><value name="verbosity">WARN</value></node>
+            <node name="default">
+                <node name="Outputs">
+                    <node name="Log"><value name="verbosity">DEBUG</value></node>
+                </node>
+            </node>
+            <node name="UpdateEngineStats"><value name="verbosity">WARN</value></node>
+            <node name="UpdateEngineThread"><value name="verbosity">WARN</value></node>
+            <node name="DeviceWindow"><value name="verbosity">WARN</value></node>
+        </node>
+        <node name="Outputs">
+            <node name="Log">
+                <value name="filename">/tmp/DisplayLinkManager.log</value>
+                <value name="line type">1</value>
+                <value name="max size">500000</value>
+                <value name="Mode">Decorate</value>
+                <value name="maxFileCount">5</value>
+            </node>
+        </node>
+    </node>
+</node>
+
+<!-- Add under HKEY_LOCAL_MACHINE/Software/DisplayLink/ -->
+<node name="Logger">
+    <value name="verbosity">DEBUG</value>
+</node>
+<node name="Core">
+    <value name="EnableUniqueDmpFiles">Yes</value>
+</node>
+```
+
+### Linux-only keys (NOT in macOS binary)
+
+| Key | Description | Why it matters |
+|---|---|---|
+| `RenderRate` | Controls render rate in the update engine | Could control FPS at the encoder level |
+| `showFPS` | Displays FPS counter | Invaluable for debugging performance |
+| `FirmwareTrace` | Firmware-level trace logging | Debug dock firmware issues |
+| `Scramble` | HDCP scrambling control | |
+| `Powerups` | Power-on sequence control | |
+
+---
+
 ## macOS: Support Tool Utilities
 
 The **DisplayLink Support Tool** (`/Applications/DisplayLink Support Tool.app`) bundles several useful utilities:
@@ -199,9 +292,20 @@ Runtime-writable sysfs attributes at `/sys/devices/evdi/`:
 | `add` | WO | Create new virtual display (write device count or `usb:<path>`) |
 | `remove_all` | WO | Remove all virtual displays |
 
-### Linux: XML Config & Advanced Logging
+### EVDI Library API — Bandwidth Control
 
-The `DLSupportTool.sh` script reveals the `.dl.xml` configuration structure:
+The `evdi_connect2()` function reveals bandwidth control parameters:
+
+```c
+void evdi_connect2(evdi_handle handle, const unsigned char *edid,
+    const unsigned int edid_length,
+    const uint32_t pixel_area_limit,       // max pixels per frame
+    const uint32_t pixel_per_second_limit); // max pixel throughput
+```
+
+These `pixel_area_limit` and `pixel_per_second_limit` parameters control quality/bandwidth tradeoffs at the kernel level.
+
+### Linux: XML Config & Advanced Logging
 
 ```bash
 # Enable advanced logging (requires xmlstarlet)
@@ -211,7 +315,7 @@ sudo DLSupportTool.sh --debug
 sudo DLSupportTool.sh --nodebug
 ```
 
-The `--debug` flag configures these logger modules in `/var/log/displaylink/.dl.xml`:
+Logger modules configurable in `/var/log/displaylink/.dl.xml`:
 
 | Module | Default verbosity | Description |
 |---|---|---|
@@ -235,29 +339,60 @@ The udev bootstrap script disables USB3 Link Power Management (U1/U2) for Displa
 ```bash
 echo 0 > /sys/$DEVPATH/../port/usb3_lpm_permit
 ```
-This prevents random disconnections caused by aggressive USB power saving.
 
 ---
 
-## Cross-Platform: ContentHint Values
+## Windows: Network Adapter Properties (v12.2.1977.0)
 
-From the Linux `DisplayLinkManager` binary, the valid `ContentHint` values for per-display optimization are:
+The Windows CDC NCM driver (`dlcdcncm.inf`) exposes these configurable properties in **Device Manager > Network Adapter > Properties > Advanced**:
 
-| Value | Description |
-|---|---|
-| `Auto` | Default — automatic detection |
-| `Game` | Optimized for gaming content |
-| `Cinema` | Optimized for video playback |
-| `Photo` | Optimized for still images |
-| `Graphics` | Optimized for desktop/graphics work |
+| Property | Type | Default | Description |
+|---|---|---|---|
+| `NetworkAddress` | edit (12 hex chars) | empty | **MAC address cloning** — enter e.g. `AABBCCDDEEFF` |
+| `VlanId` | long (0-4094) | 0 | VLAN tagging |
+| `*PriorityVLANTag` | enum | 3 (both enabled) | Priority & VLAN enable |
+| `*SpeedDuplex` | enum | 0 (auto) | Speed: Auto / 10M / 100M / 1G Full Duplex |
+| `*WakeOnMagicPacket` | enum | enabled | Wake on LAN |
+| `*ModernStandbyWoLMagicPacket` | enum | enabled | Modern Standby WoL |
+| `WakeOnLinkeStateChangeSupportedByHardware` | enum | enabled | Wake on link change |
+| `*SelectiveSuspend` | enum | enabled | USB selective suspend |
+| `*SSIdleTimeout` | long (1-60) | 5 sec | Selective suspend idle timeout |
+| `*SSIdleTimeoutScreenOff` | long (1-60) | 3 sec | SS timeout when screen off |
+| `*DeviceSleepOnDisconnect` | enum | enabled | Sleep on cable disconnect |
+| `*EEE` | enum | disabled | Green Ethernet (802.3az) |
 
-> **macOS note:** Ghidra analysis confirms only `Auto` is referenced in the macOS binary. The Game/Cinema/Photo/Graphics values are **Linux-only** and not functional on macOS.
+The driver also includes `BIOSMAC_VIDPID` entries (`0x17E94312`, `0x17E94318`) for reading MAC from BIOS/SMBIOS on specific devices.
 
-These map to the `ContentHint` field in `.dlua.xml` (macOS) or `.dl.xml` (Linux) per-display configuration.
+### Windows: Default New Device Behavior
+
+```
+HKEY_LOCAL_MACHINE\software\DisplayLink\Products\DisplayLink Graphics\OnNewDevice
+  Activity = "Extend"
+  ExtendPosition = "Right"
+  Launch = "WDP"
+```
+
+### Windows: Product Features
+
+```
+HKEY_LOCAL_MACHINE\Software\DisplayLink\Products\DisplayLink Graphics\Features
+  HdmiOverscan = "Yes"
+  ProtectedEnvironment = "No"
+  CompatibilityCheck = "Yes"
+  PromoteStoreApp = "Yes"
+  BundleVmmFirmware = "No"
+  WirelessProduct = "No"
+```
+
+### Windows: Supported Devices
+
+The `ImportSettings.reg` contains product branding for 60+ devices from Kensington, IOGEAR, Samsung, Toshiba, LG, HP, Lenovo, Fujitsu, ASUS, Belkin, Dell, Anker, Plugable, Wacom, and Synaptics.
+
+---
 
 ## Cross-Platform: Firmware
 
-### Bundled firmware packages (in both macOS and Linux drivers)
+### Bundled firmware packages (in all three platforms)
 
 | File | Codename | Type | Size (Linux) |
 |---|---|---|---|
@@ -338,6 +473,24 @@ New IOSurface arrives
 
 ---
 
+## TODO: Experiments to try on macOS
+
+The following experiments are based on cross-platform analysis but have **not been tested** yet:
+
+1. **Enable plaintext debug logging** — Add the Logger XML config to `.dlua.xml` (structure documented above). If this produces readable logs, it would massively help further debugging.
+
+2. **Tune `WindowSize`** — Add `<value name="WindowSize">...</value>` under a `Core` XML node. Larger window = more USB throughput per transaction, at the cost of latency. Values likely map to USB transfer sizes.
+
+3. **Tune `BandwidthAllocator`** — Add under `Core`. May control how bandwidth is split when multiple DisplayLink displays are connected.
+
+4. **Test `ContentHint` values** — Change from `Auto` to `Graphics` in the per-display Viewer node. Though only `Auto` is in the macOS binary strings, the C++ core that reads it is shared, so Linux values (`Game`/`Cinema`/`Photo`/`Graphics`) might still work.
+
+5. **Test `ExtraModes`** — Add under the per-display `NivoSettings` to potentially unlock additional resolutions.
+
+6. **Test `MaskProtocolErrors`** — Could reduce display flickering caused by transient USB protocol errors.
+
+---
+
 ## Methodology
 
 - **macOS `defaults write` keys**: Extracted from binary strings, correlated with `NSUserDefaults` access patterns (`boolForKey:`, `stringForKey:`, `integerForKey:`)
@@ -352,11 +505,15 @@ New IOSurface arrives
   - `FUN_10000adec`: `AppDelegate` init that reads `DisableRestartOnCrash` and registers `SMAppService`
 - **Linux driver**: Extracted from Makeself archive (`tail -n +714 | gzip -cd | tar xf -`)
 - **EVDI parameters**: From kernel module source code (`evdi_params.c`, `evdi_sysfs.c`)
+- **EVDI library API**: From `evdi_lib.h` — `evdi_connect2()` bandwidth parameters
+- **Cross-platform XML keys**: Found by cross-referencing strings in Linux `DisplayLinkManager` (aarch64) and macOS `DisplayLinkUserAgent` (arm64)
 - **ContentHint values**: From Linux `DisplayLinkManager` binary strings (confirmed macOS-absent via Ghidra)
+- **Windows driver**: Extracted from PE32 installer → 7z SFX → driver packages. Registry settings from embedded `ImportSettings.reg` and `dlcdcncm.inf`
 
 ## Notes
 
 - Hidden preferences may change or disappear with any DisplayLink update
 - DisplayLink on macOS works via screen capture (not native GPU output) — a fundamental Apple limitation
 - The Linux driver uses EVDI (virtual display interface in kernel) + DRM, which is architecturally different from macOS
+- Windows uses native GPU driver integration (WDDM), not screen capture — fundamentally different from both macOS and Linux
 - Tested April 2026. YMMV on different versions
