@@ -1,6 +1,6 @@
 # DisplayLink Hidden Settings & Architecture (macOS + Linux)
 
-Undocumented preferences and internal architecture of DisplayLink drivers, reverse-engineered from macOS binary (v15.1.0) and Linux driver (v6.2.0-30).
+Undocumented preferences and internal architecture of DisplayLink drivers, reverse-engineered from macOS binary (v15.1.0) and Linux driver (v6.2.0-30). Key settings verified via Ghidra disassembly.
 
 Tested on: **Apple M3 Max, macOS Tahoe 26.4, DisplayLink Manager 15.1.0, DisplayLink USB-C Dual-4K Dock (GenesysLogic GL352x hub, FW 0x9305), 2x HP E273 (1080p @ 60Hz)**
 
@@ -14,8 +14,6 @@ This is the single most impactful setting for perceived smoothness on DisplayLin
 defaults write com.displaylink.DisplayLinkUserAgent ForceScreenRefresh -bool true
 ```
 
-Forces DisplayLink to capture fresh frames more aggressively rather than skipping frames it considers unchanged. Results in noticeably smoother window dragging and scrolling on DisplayLink-connected monitors.
-
 **To revert:**
 
 ```bash
@@ -28,41 +26,100 @@ After changing, restart DisplayLink:
 killall DisplayLinkUserAgent && sleep 2 && open "/Applications/DisplayLink Manager.app"
 ```
 
+### How It Works (Ghidra-verified)
+
+The `BaseScreenRecorder` class has a boolean field `nextFrameNeedsFullScreenUpdate`, initialized to `true`. When a new IOSurface frame arrives from screen capture, the frame processing function (`FUN_100050310`) follows this logic:
+
+1. A new frame arrives from `SCStream` (ScreenCaptureKit)
+2. Check if a `GpuDiffer` (Metal-based frame differ) exists
+3. **If no differ exists**, read `ForceScreenRefresh` via `NSUserDefaults.boolForKey:`
+4. If `ForceScreenRefresh` is **false** (default): create a `GpuDiffer` to detect changed screen regions. Only changed regions are sent to hardware, saving bandwidth but occasionally skipping frames the differ considers "unchanged"
+5. If `ForceScreenRefresh` is **true**: **skip differ creation entirely**. `nextFrameNeedsFullScreenUpdate` stays `true`, so every captured frame is treated as a full-screen update
+
+**This is why it feels smoother**: without GPU diffing, every captured frame is sent in its entirety to the DisplayLink hardware. There is zero chance of the differ incorrectly marking a frame as "unchanged" and skipping it. The tradeoff is more CPU/USB bandwidth usage — but on an M3 Max with 1080p displays, this overhead is negligible.
+
+> **Note:** `ForceScreenRefresh` is only read at startup via `registerDefaults:` and during frame processing. It is **not** KVO-observed at runtime, so changes require an app restart.
+
+---
+
+## macOS: Screen Recorder Architecture (Ghidra-verified)
+
+DisplayLink implements **three screen capture backends** plus a runtime switcher:
+
+| Class | Backend API | Role |
+|---|---|---|
+| `SCKitScreenRecorder` | ScreenCaptureKit (`SCStream`, `SCContentFilter`) | Primary on macOS 12.3+ |
+| `CGDSScreenRecorder` | `CGDisplayStreamCreateWithDispatchQueue` | Legacy fallback |
+| `AVFoundationScreenRecorder` | `AVCaptureVideoDataOutput` | Oldest fallback |
+| `SwitchingScreenRecorder` | Wraps primary + fallback | Runtime backend switching |
+
+`SwitchingScreenRecorder::init` takes a **primary** and **fallback** recorder. It maintains a dispatch queue, tracks the current active backend, and stores the last gamma ramp event and display data for seamless switching.
+
+### Frame Rate Configuration (Ghidra-verified)
+
+The `SCStreamConfiguration.minimumFrameInterval` is set by `FUN_10004b5b4`:
+
+1. Iterates `NSScreen.screens`, looking for the screen matching the DisplayLink display
+2. Calls `NSScreen.maximumFramesPerSecond` for that screen
+3. If the screen's max FPS ≥ 61: clamps to **60 Hz** (i.e., `CMTime(1, 60)`)
+4. If < 61: uses the screen's native rate
+5. Hard cap at **120 Hz** maximum (`CMTime(1, 120)`)
+
+The `SCStreamConfiguration` is created with these fixed properties:
+- `pixelFormat`: `0x42475241` (ARGB/BGRA)
+- `queueDepth`: 7
+- `showsCursor`: true
+- `scalesToFit`: false
+- `capturesAudio`: false
+- `excludesCurrentProcessAudio`: true
+
+---
+
 ## macOS: All Hidden `defaults write` Keys
 
 Complete list of NSUserDefaults keys found in the `DisplayLinkUserAgent` binary:
 
 ### Performance & Rendering
 
-| Key | Type | Description |
-|---|---|---|
-| `ForceScreenRefresh` | Bool | **Best perf tweak** — forces aggressive frame capture instead of skipping unchanged frames |
-| `ForceBackendAPI` | String | Accepts `"ScreenCaptureKit"`. On v15.1.0, the app already uses ScreenCaptureKit by default (confirmed via stack trace sampling with `sample`), so this may not change behavior |
-| `FallbackBackendAPI` | String | Fallback capture API if the primary fails |
-| `DisableGpuDiffing` | Bool | Disables Metal-based GPU frame diffing. **Don't set this** — GPU diffing is beneficial |
-| `DetectVideoOverlay` | Bool | Auto-detect video call overlays — **known performance issue** when enabled (causes CPU spikes and lag, see [BetterDisplay #4905](https://github.com/waydabber/BetterDisplay/discussions/4905)) |
+| Key | Type | Verified | Description |
+|---|---|---|---|
+| `ForceScreenRefresh` | Bool | Ghidra ✓ | **Best perf tweak** — disables GPU frame diffing, forces every frame as full-screen update |
+| `ForceBackendAPI` | String | Ghidra ✓ | KVO-observed at runtime. Non-empty string = true. Likely controls which backend is primary in `SwitchingScreenRecorder` |
+| `FallbackBackendAPI` | String | strings | Fallback capture API if the primary fails |
+| `DisableGpuDiffing` | Bool | strings | May be an alias for `ForceScreenRefresh` or a separate code path |
+| `DetectVideoOverlay` | Bool | Ghidra ✓ | Auto-detect video call overlays — **known performance issue** when enabled (causes CPU spikes and lag, see [BetterDisplay #4905](https://github.com/waydabber/BetterDisplay/discussions/4905)). Read in `UserSettings::init` |
 
 ### Display Modes
 
-| Key | Type | Description |
-|---|---|---|
-| `EnableExperimentalModes` | Bool | Enables experimental display modes. [Officially documented for HiDPI](https://support.displaylink.com/knowledgebase/articles/1993915-displaylink-manager-app-experimental-hidpi-modes) |
-| `EnableLargeHiDPIModes` | Bool | Enables scaled 3008x, 2560x and more modes |
+| Key | Type | Verified | Description |
+|---|---|---|---|
+| `EnableExperimentalModes` | Bool | strings | Enables experimental display modes. [Officially documented for HiDPI](https://support.displaylink.com/knowledgebase/articles/1993915-displaylink-manager-app-experimental-hidpi-modes) |
+| `EnableLargeHiDPIModes` | Bool | Ghidra ✓ | Enables scaled 3008x, 2560x and more modes. Read in `UserSettings::init` |
 
 ### Color Processing
 
-| Key | Type | Description |
-|---|---|---|
-| `DisableFluxGammaSupport` | Bool | Skips f.lux color processing integration |
-| `DisableNightShiftSupport` | Bool | Skips Night Shift color temperature processing |
+| Key | Type | Verified | Description |
+|---|---|---|---|
+| `DisableFluxGammaSupport` | Bool | strings | Skips f.lux color processing integration |
+| `DisableNightShiftSupport` | Bool | Ghidra ✓ | When true, skips `dlopen` of `CoreBrightness.framework` entirely, preventing Night Shift hooks. The `NightShiftSingleton` is never initialized |
 
 ### Application Behavior
 
-| Key | Type | Description |
-|---|---|---|
-| `ShowMenuBarIcon` | Bool | Hide/show the menu bar icon (`0` to hide, `1` to show) |
-| `AppAutostart` | Bool | Auto-launch DisplayLink Manager on login |
-| `DisableRestartOnCrash` | Bool | Prevents auto-restart after a crash |
+| Key | Type | Verified | Description |
+|---|---|---|---|
+| `ShowMenuBarIcon` | Bool | Ghidra ✓ | Hide/show the menu bar icon. Read directly from `UserSettings.showMenuBarIcon` field in `AppDelegate` init |
+| `AppAutostart` | Bool | Ghidra ✓ | Auto-launch on login. KVO-observed at runtime alongside `ForceBackendAPI` |
+| `DisableRestartOnCrash` | Bool | Ghidra ✓ | When false (default), registers an `SMAppService` agent plist for automatic crash recovery restart |
+
+### KVO-Observed Keys (Runtime Changes Without Restart)
+
+Only **two** keys are watched via `observeValueForKeyPath:`:
+- `AppAutostart` (bool change triggers Combine `Published` update)
+- `ForceBackendAPI` (string change → converted to bool: non-empty = true)
+
+All other settings require an app restart to take effect.
+
+---
 
 ## macOS: Support Tool Utilities
 
@@ -81,20 +138,14 @@ Example output:
 Online displays count: 3
 Display ID: 0x1 Flags: ["MAIN", "BUILT-IN"]
 Mode: 3456x2234@1.2e+02 (PHYSICAL), 1728x1117 (VIRTUAL)
-Position: (0.0, 0.0) Rotation: 0.0
 
 Display ID: 0x3f Flags: []
 Mode: 1920x1080@60
-Position: (-1079.0, -1080.0) Rotation: 0.0
 ```
 
 ### `ChangeLoggingLevel` binary
 
-Sets logging verbosity (Debug / Info / Verbose) by editing `.dlua.xml`:
-
-```bash
-"/Applications/DisplayLink Support Tool.app/Contents/MacOS/ChangeLoggingLevel"
-```
+Sets logging verbosity (Debug / Info / Verbose) by editing `.dlua.xml`.
 
 ### `dlinfo` script
 
@@ -150,7 +201,7 @@ Runtime-writable sysfs attributes at `/sys/devices/evdi/`:
 
 ### Linux: XML Config & Advanced Logging
 
-The `DLSupportTool.sh` script reveals the `.dl.xml` configuration structure and logging system:
+The `DLSupportTool.sh` script reveals the `.dl.xml` configuration structure:
 
 ```bash
 # Enable advanced logging (requires xmlstarlet)
@@ -172,16 +223,6 @@ The `--debug` flag configures these logger modules in `/var/log/displaylink/.dl.
 | `LUsbConnAlex` | WARN | USB connection (Alex chipset) |
 | `LUsbConnFpga` | WARN | USB connection (FPGA chipset) |
 
-Log output configuration:
-```xml
-<node name="Log">
-  <value name="filename">/var/log/displaylink/DisplayLinkManager.log</value>
-  <value name="line type">1</value>
-  <value name="max size">500000</value>
-  <value name="Mode">Decorate</value>
-</node>
-```
-
 ### Linux: Suspend/Resume IPC
 
 DisplayLinkManager uses named pipes for power management:
@@ -200,7 +241,7 @@ This prevents random disconnections caused by aggressive USB power saving.
 
 ## Cross-Platform: ContentHint Values
 
-From the Linux binary, the valid `ContentHint` values for per-display optimization are:
+From the Linux `DisplayLinkManager` binary, the valid `ContentHint` values for per-display optimization are:
 
 | Value | Description |
 |---|---|
@@ -209,6 +250,8 @@ From the Linux binary, the valid `ContentHint` values for per-display optimizati
 | `Cinema` | Optimized for video playback |
 | `Photo` | Optimized for still images |
 | `Graphics` | Optimized for desktop/graphics work |
+
+> **macOS note:** Ghidra analysis confirms only `Auto` is referenced in the macOS binary. The Game/Cinema/Photo/Graphics values are **Linux-only** and not functional on macOS.
 
 These map to the `ContentHint` field in `.dlua.xml` (macOS) or `.dl.xml` (Linux) per-display configuration.
 
@@ -233,17 +276,55 @@ Current hub firmware can be read from `bcdDevice` in IORegistry (macOS) or `/sys
 
 ---
 
-## Internal Rendering Pipeline (macOS)
+## Internal Rendering Pipeline (macOS, Ghidra-verified)
 
-From binary analysis:
+### Capture Layer
 
-1. **Screen capture** → ScreenCaptureKit (`SCStream`, `SCContentFilter`, `SCShareableContent`)
-2. **GPU diffing** → Metal shaders (`GpuDiffer`, `ShaderLibrary.metallib`) to detect changed regions
-3. **Zero-copy encoding** → `ZeroCopyGpuEncodeSurfacesWrapper` for efficient frame encoding
-4. **Healing frames** → `HealingFramesWatchdog` periodically sends full frames to fix corruption
-5. **Bandwidth allocation** → `BandwidthAllocator` manages throughput across multiple displays
-6. **Rendering** → `DLRenderPipeline` / `DLRenderEncoder` using Metal render pipeline
-7. **NivoViewer** → Per-display viewer with `ContentHint`, rotation, border adjustment
+```
+SCKitScreenRecorder
+  └─ SCStream (ScreenCaptureKit)
+       ├─ SCContentFilter (initWithDisplay:excludingApplications:exceptingWindows:)
+       ├─ SCStreamConfiguration
+       │    ├─ minimumFrameInterval: CMTime(1, displayFPS) — capped at 120Hz
+       │    ├─ queueDepth: 7
+       │    ├─ pixelFormat: BGRA
+       │    └─ showsCursor: true
+       └─ CaptureStreamOutput (receives IOSurface frames)
+            └─ silentRestartsThreshold: read from NSUserDefaults integerForKey (default: 6)
+```
+
+### Processing Layer
+
+```
+BaseScreenRecorder (processes captured frames)
+  ├─ nextFrameNeedsFullScreenUpdate: bool (init: true)
+  ├─ gpuDifferCreationRequired: bool (init: false)
+  ├─ differ: GpuDiffer? (Metal-based frame differ)
+  ├─ framesWatchdog: monitors frame delivery
+  ├─ healingFramesWatchdog: periodically forces full frames
+  ├─ frameTransformer: applies transformations
+  ├─ gammaApplier: color correction
+  ├─ shadowSurfaces: double-buffered IOSurfaces
+  └─ latestSurface: most recent captured IOSurface
+```
+
+### Frame Processing Flow (ForceScreenRefresh path)
+
+```
+New IOSurface arrives
+  │
+  ├─ differ exists? ──yes──▶ Use GpuDiffer to find changed rects
+  │                           └─ Send only changed regions
+  │
+  └─ differ is nil?
+       │
+       ├─ ForceScreenRefresh=false ──▶ Create GpuDiffer (FUN_100047f84)
+       │                                └─ Future frames use diff-based updates
+       │
+       └─ ForceScreenRefresh=true ──▶ Skip differ creation
+                                       └─ Every frame = full screen update
+                                            (nextFrameNeedsFullScreenUpdate stays true)
+```
 
 ### Log & Config Locations (macOS)
 
@@ -259,15 +340,19 @@ From binary analysis:
 
 ## Methodology
 
-- macOS `defaults write` keys extracted from binary strings correlated with `NSUserDefaults` access patterns (`boolForKey:`, `stringForKey:`)
-- ScreenCaptureKit backend verified via `sample` (call stack sampling) — both default and forced modes showed `SCStream` calls, zero `CGDisplayStream` calls
-- Linux driver extracted from Makeself archive (`tail -n +714 | gzip -cd | tar xf -`)
-- EVDI parameters from kernel module source code (`evdi_params.c`, `evdi_sysfs.c`)
-- ContentHint values from Linux `DisplayLinkManager` binary strings
-- Logger modules from `DLSupportTool.sh` XML editing functions
-- Support Tool scripts read directly as plaintext shell/bash
-
-For deeper analysis of the stripped macOS binary (e.g., `ForceScreenRefresh` capture loop behavior, `BandwidthAllocator` tuning, `ZeroCopyGpuEncodeSurfacesWrapper` internals), Ghidra disassembly would be needed.
+- **macOS `defaults write` keys**: Extracted from binary strings, correlated with `NSUserDefaults` access patterns (`boolForKey:`, `stringForKey:`, `integerForKey:`)
+- **ScreenCaptureKit verification**: `sample` (call stack sampling) confirmed both default and forced modes use `SCStream`, zero `CGDisplayStream` calls
+- **Ghidra disassembly** of `DisplayLinkUserAgent` (arm64 Mach-O, 13 MB, stripped):
+  - `UserSettings::init` (`0x10002a410`): reads all defaults into Swift `@Published` properties
+  - `UserSettings::observeValueForKeyPath` (`0x10002b538`): KVO handler for `AppAutostart` and `ForceBackendAPI`
+  - `FUN_100050310`: frame processing function that reads `ForceScreenRefresh` and conditionally creates `GpuDiffer`
+  - `FUN_10004b66c`: `SCStreamConfiguration` setup with frame interval, pixel format, queue depth
+  - `FUN_10004b5b4`: frame interval calculation (CMTime from display FPS, clamped 60-120Hz)
+  - `FUN_1000480f0`: `NightShiftSingleton` init that reads `DisableNightShiftSupport` and conditionally loads CoreBrightness
+  - `FUN_10000adec`: `AppDelegate` init that reads `DisableRestartOnCrash` and registers `SMAppService`
+- **Linux driver**: Extracted from Makeself archive (`tail -n +714 | gzip -cd | tar xf -`)
+- **EVDI parameters**: From kernel module source code (`evdi_params.c`, `evdi_sysfs.c`)
+- **ContentHint values**: From Linux `DisplayLinkManager` binary strings (confirmed macOS-absent via Ghidra)
 
 ## Notes
 
