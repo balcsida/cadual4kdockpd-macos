@@ -1,10 +1,12 @@
-# DisplayLink macOS Hidden Performance Settings
+# DisplayLink Hidden Settings & Architecture (macOS + Linux)
 
-Undocumented `defaults write` preferences for DisplayLink Manager on macOS, reverse-engineered from the `DisplayLinkUserAgent` binary (v15.1.0).
+Undocumented preferences and internal architecture of DisplayLink drivers, reverse-engineered from macOS binary (v15.1.0) and Linux driver (v6.2.0-30).
 
 Tested on: **Apple M3 Max, macOS Tahoe 26.4, DisplayLink Manager 15.1.0, DisplayLink USB-C Dual-4K Dock (GenesysLogic GL352x hub, FW 0x9305), 2x HP E273 (1080p @ 60Hz)**
 
-## The Key Setting: `ForceScreenRefresh`
+---
+
+## macOS: The Key Setting — `ForceScreenRefresh`
 
 This is the single most impactful setting for perceived smoothness on DisplayLink displays:
 
@@ -26,7 +28,7 @@ After changing, restart DisplayLink:
 killall DisplayLinkUserAgent && sleep 2 && open "/Applications/DisplayLink Manager.app"
 ```
 
-## All Hidden `defaults write` Keys
+## macOS: All Hidden `defaults write` Keys
 
 Complete list of NSUserDefaults keys found in the `DisplayLinkUserAgent` binary:
 
@@ -62,7 +64,7 @@ Complete list of NSUserDefaults keys found in the `DisplayLinkUserAgent` binary:
 | `AppAutostart` | Bool | Auto-launch DisplayLink Manager on login |
 | `DisableRestartOnCrash` | Bool | Prevents auto-restart after a crash |
 
-## Support Tool Discoveries
+## macOS: Support Tool Utilities
 
 The **DisplayLink Support Tool** (`/Applications/DisplayLink Support Tool.app`) bundles several useful utilities:
 
@@ -94,71 +96,156 @@ Sets logging verbosity (Debug / Info / Verbose) by editing `.dlua.xml`:
 "/Applications/DisplayLink Support Tool.app/Contents/MacOS/ChangeLoggingLevel"
 ```
 
-Config file location: `~/Library/Group Containers/73YQY62QM3.com.displaylink.DisplayLinkShared/Library/Application Support/Logs/.dlua.xml`
-
 ### `dlinfo` script
 
-Collects a comprehensive system diagnostics zip including:
-- Full system profile (SPX and text)
-- IORegistry dumps (IOService and IOUSB)
-- WindowServer preferences (system-wide and per-user)
-- DisplayLink crash reports
-- DisplayLink logs and EDID files
-- DisplayLink process list
+Collects a comprehensive system diagnostics zip including IORegistry dumps, WindowServer prefs, crash reports, DisplayLink logs, and EDID files.
 
 ### `ResetDisplayPrefs.command` script
 
-Nuclear option — deletes all display layout preferences:
-- `/Library/Preferences/com.apple.windowserver.plist`
-- Per-user `com.apple.windowserver.*.plist` in ByHost
-- DisplayLink shared preferences
-- Requires reboot after running
+Nuclear option — deletes all display layout preferences (WindowServer plists and DisplayLink shared prefs). Requires reboot.
 
-## XPC Service (Inter-Process Communication)
+## macOS: XPC Service (DDC Monitor Control)
 
-The `DisplayLinkXpcService` binary reveals DDC monitor control capabilities:
+The `DisplayLinkXpcService` binary exposes DDC monitor control:
 
-- **Brightness control** — set/get per-display brightness
-- **Contrast control** — set/get per-display contrast
-- **Flip setting** — per-display rotation/flip
+- **Brightness** — set/get per-display
+- **Contrast** — set/get per-display
+- **Flip/Rotation** — per-display
 - **Display enable/disable** — toggle individual displays
 
-These are communicated between the user agent and a driver component via XPC.
+---
 
-## Firmware
+## Linux: Driver Architecture (v6.2.0)
 
-### Bundled firmware packages
+The Linux driver (`displaylink-driver-6.2.0-30.run`) consists of:
 
-The DisplayLink Manager app includes 4 firmware packages for different dock chipsets:
+- **EVDI** — open-source kernel module (Extensible Virtual Display Interface, v1.14.11), [source on GitHub](https://github.com/DisplayLink/evdi)
+- **DisplayLinkManager** — closed-source userspace daemon (runs as root from `/opt/displaylink/`)
+- **libevdi** — userspace library for communicating with the kernel module
+- **Firmware packages** — same `.spkg` files as macOS (ella, navarro, ridge, firefly)
 
-| File | Codename | Type |
+### EVDI Kernel Module Parameters
+
+```bash
+# Load-time parameters (via /etc/modprobe.d/evdi.conf)
+modprobe evdi initial_loglevel=4 initial_device_count=0
+```
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `initial_loglevel` | int | 4 (INFO) | 1=FATAL, 2=ERROR, 3=WARN, 4=INFO, 5=DEBUG, 6=VERBOSE |
+| `initial_device_count` | ushort | 0 | Pre-create DRM devices at load time |
+
+### EVDI Sysfs Interface
+
+Runtime-writable sysfs attributes at `/sys/devices/evdi/`:
+
+| Attribute | Access | Description |
 |---|---|---|
-| `ella-dock-release.spkg` | EllaDockOW | Dock |
-| `navarro-dock-release.spkg` | NavaDockOW | Dock |
-| `ridge-dock-release.spkg` | — | Dock |
-| `firefly-monitor-release.spkg` | — | Monitor |
+| `version` | RO | EVDI module version |
+| `count` | RO | Number of active EVDI devices |
+| `loglevel` | RW | **Runtime log level** (0-6, writable without reload!) |
+| `add` | WO | Create new virtual display (write device count or `usb:<path>`) |
+| `remove_all` | WO | Remove all virtual displays |
 
-All use the "ELLA" container format (likely Synaptics internal).
+### Linux: XML Config & Advanced Logging
 
-### USB Hub firmware (GenesysLogic GL352x)
+The `DLSupportTool.sh` script reveals the `.dl.xml` configuration structure and logging system:
 
-The dock's USB hub uses a **GenesysLogic GL352x** chip (VID `0x05E3`, PID `0x0610`). A separate Windows-only firmware updater (`CADUAL4KDOCKPD_9392.exe` / "USB3.0 Hub Update Tool v3.001") can update the hub firmware from version 9311 to 9392, fixing random disconnection issues. This tool uses `GL_SS_HUB_ISP.exe` internally and flashes two ROM files (`Hub_1_9392_L1.ROM`, `Hub_1_9392_L2.ROM`).
+```bash
+# Enable advanced logging (requires xmlstarlet)
+sudo DLSupportTool.sh --debug
 
-Current hub firmware can be read from `bcdDevice` in IORegistry (e.g., decimal `37637` = `0x9305`).
+# Disable advanced logging
+sudo DLSupportTool.sh --nodebug
+```
 
-## Internal Architecture
+The `--debug` flag configures these logger modules in `/var/log/displaylink/.dl.xml`:
 
-From binary analysis, the rendering pipeline consists of:
+| Module | Default verbosity | Description |
+|---|---|---|
+| `connBandwidth` | WARN | Connection bandwidth monitoring |
+| `default` | DEBUG (to Log output) | General logging |
+| `UpdateEngineStats` | WARN | Frame update statistics |
+| `UpdateEngineThread` | WARN | Update engine thread activity |
+| `DeviceWindow` | WARN | Device window management |
+| `LUsbConnAlex` | WARN | USB connection (Alex chipset) |
+| `LUsbConnFpga` | WARN | USB connection (FPGA chipset) |
 
-- **Screen capture** → ScreenCaptureKit (`SCStream`, `SCContentFilter`, `SCShareableContent`)
-- **GPU diffing** → Metal shaders (`GpuDiffer`, `ShaderLibrary.metallib`) to detect changed regions
-- **Zero-copy encoding** → `ZeroCopyGpuEncodeSurfacesWrapper` for efficient frame encoding
-- **Healing frames** → `HealingFramesWatchdog` periodically sends full frames to fix corruption
-- **Bandwidth allocation** → `BandwidthAllocator` manages throughput across multiple displays
-- **Rendering** → `DLRenderPipeline` / `DLRenderEncoder` using Metal render pipeline
-- **NivoViewer** → Per-display viewer with `ContentHint` (values: at least `Auto`), rotation, border adjustment
+Log output configuration:
+```xml
+<node name="Log">
+  <value name="filename">/var/log/displaylink/DisplayLinkManager.log</value>
+  <value name="line type">1</value>
+  <value name="max size">500000</value>
+  <value name="Mode">Decorate</value>
+</node>
+```
 
-### Log & config locations
+### Linux: Suspend/Resume IPC
+
+DisplayLinkManager uses named pipes for power management:
+- `/tmp/PmMessagesPort_in` — write `S` to suspend, `R` to resume
+- `/tmp/PmMessagesPort_out` — read result after suspend
+
+### Linux: USB Power Management
+
+The udev bootstrap script disables USB3 Link Power Management (U1/U2) for DisplayLink devices:
+```bash
+echo 0 > /sys/$DEVPATH/../port/usb3_lpm_permit
+```
+This prevents random disconnections caused by aggressive USB power saving.
+
+---
+
+## Cross-Platform: ContentHint Values
+
+From the Linux binary, the valid `ContentHint` values for per-display optimization are:
+
+| Value | Description |
+|---|---|
+| `Auto` | Default — automatic detection |
+| `Game` | Optimized for gaming content |
+| `Cinema` | Optimized for video playback |
+| `Photo` | Optimized for still images |
+| `Graphics` | Optimized for desktop/graphics work |
+
+These map to the `ContentHint` field in `.dlua.xml` (macOS) or `.dl.xml` (Linux) per-display configuration.
+
+## Cross-Platform: Firmware
+
+### Bundled firmware packages (in both macOS and Linux drivers)
+
+| File | Codename | Type | Size (Linux) |
+|---|---|---|---|
+| `ella-dock-release.spkg` | EllaDockOW | Dock | 925 KB |
+| `navarro-dock-release.spkg` | NavaDockOW | Dock | 1.7 MB |
+| `ridge-dock-release.spkg` | — | Dock | 883 KB |
+| `firefly-monitor-release.spkg` | — | Monitor | 363 KB |
+
+All use the "ELLA" container format (Synaptics internal). DL-7xxx/6xxx/5xxx/3xxx/41xx devices are automatically upgraded upon connection on Linux.
+
+### USB Hub Firmware (GenesysLogic GL352x)
+
+The dock's USB hub uses a **GenesysLogic GL352x** chip (VID `0x05E3`, PID `0x0610`). A separate Windows-only firmware updater (`CADUAL4KDOCKPD_9392.exe` / "USB3.0 Hub Update Tool v3.001") can update the hub firmware from version 9311 → 9392, fixing random disconnection issues. Uses `GL_SS_HUB_ISP.exe` internally, flashing `Hub_1_9392_L1.ROM` and `Hub_1_9392_L2.ROM`.
+
+Current hub firmware can be read from `bcdDevice` in IORegistry (macOS) or `/sys/bus/usb/devices/*/bcdDevice` (Linux). Example: decimal `37637` = hex `0x9305`.
+
+---
+
+## Internal Rendering Pipeline (macOS)
+
+From binary analysis:
+
+1. **Screen capture** → ScreenCaptureKit (`SCStream`, `SCContentFilter`, `SCShareableContent`)
+2. **GPU diffing** → Metal shaders (`GpuDiffer`, `ShaderLibrary.metallib`) to detect changed regions
+3. **Zero-copy encoding** → `ZeroCopyGpuEncodeSurfacesWrapper` for efficient frame encoding
+4. **Healing frames** → `HealingFramesWatchdog` periodically sends full frames to fix corruption
+5. **Bandwidth allocation** → `BandwidthAllocator` manages throughput across multiple displays
+6. **Rendering** → `DLRenderPipeline` / `DLRenderEncoder` using Metal render pipeline
+7. **NivoViewer** → Per-display viewer with `ContentHint`, rotation, border adjustment
+
+### Log & Config Locations (macOS)
 
 | Path | Description |
 |---|---|
@@ -168,16 +255,23 @@ From binary analysis, the rendering pipeline consists of:
 | `*.edid` | Raw EDID data per monitor (256 bytes each) |
 | `dlm_message_server_in#1` / `dlm_message_server_out#1` | Named pipes for IPC |
 
-## How These Were Found
+---
 
-Keys and architecture details were extracted from the binaries using `strings` and correlated with `NSUserDefaults` access patterns (`boolForKey:`, `stringForKey:`, etc.). The `ForceBackendAPI` setting was verified using `sample` (call stack sampling) — both default and forced modes showed `SCStream` / `SCShareableContent` calls, with zero `CGDisplayStream` calls, confirming v15.1.0 already uses ScreenCaptureKit natively.
+## Methodology
 
-Support Tool scripts (`dlinfo`, `dlclearlogs`, `ResetDisplayPrefs.command`) were read directly as they are plaintext shell scripts.
+- macOS `defaults write` keys extracted from binary strings correlated with `NSUserDefaults` access patterns (`boolForKey:`, `stringForKey:`)
+- ScreenCaptureKit backend verified via `sample` (call stack sampling) — both default and forced modes showed `SCStream` calls, zero `CGDisplayStream` calls
+- Linux driver extracted from Makeself archive (`tail -n +714 | gzip -cd | tar xf -`)
+- EVDI parameters from kernel module source code (`evdi_params.c`, `evdi_sysfs.c`)
+- ContentHint values from Linux `DisplayLinkManager` binary strings
+- Logger modules from `DLSupportTool.sh` XML editing functions
+- Support Tool scripts read directly as plaintext shell/bash
 
-For deeper analysis (e.g., how `ForceScreenRefresh` modifies the capture loop, valid `ContentHint` values beyond `Auto`, `BandwidthAllocator` tuning), Ghidra disassembly of the stripped Mach-O binary would be needed.
+For deeper analysis of the stripped macOS binary (e.g., `ForceScreenRefresh` capture loop behavior, `BandwidthAllocator` tuning, `ZeroCopyGpuEncodeSurfacesWrapper` internals), Ghidra disassembly would be needed.
 
 ## Notes
 
-- These are **undocumented internal preferences** — they may change or disappear with any DisplayLink update.
-- DisplayLink on macOS works via screen capture (not native GPU output), which is a fundamental architectural limitation imposed by Apple. These tweaks help but can't make it match a native display connection.
-- Tested April 2026. YMMV on different versions.
+- Hidden preferences may change or disappear with any DisplayLink update
+- DisplayLink on macOS works via screen capture (not native GPU output) — a fundamental Apple limitation
+- The Linux driver uses EVDI (virtual display interface in kernel) + DRM, which is architecturally different from macOS
+- Tested April 2026. YMMV on different versions
