@@ -2,7 +2,7 @@
 
 Undocumented `defaults write` preferences for DisplayLink Manager on macOS, reverse-engineered from the `DisplayLinkUserAgent` binary (v15.1.0).
 
-Tested on: **Apple M3 Max, macOS Sequoia, DisplayLink Manager 15.1.0, 2x HP E273 (1080p @ 60Hz)**
+Tested on: **Apple M3 Max, macOS Tahoe 26.4, DisplayLink Manager 15.1.0, DisplayLink USB-C Dual-4K Dock, 2x HP E273 (1080p @ 60Hz)**
 
 ## The Key Setting: `ForceScreenRefresh`
 
