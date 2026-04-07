@@ -483,15 +483,7 @@ New IOSurface arrives
 | `ContentHint=Graphics` in `.dlua.xml` | **No perceptible effect** | XML was accepted and survived restart, but no visible difference — likely because `ForceScreenRefresh` already sends full uncompressed frames, making encoder hints irrelevant. |
 | `DisableFluxGammaSupport=true` | **Applied** | Removes f.lux hook overhead. Minor/unmeasurable impact. |
 | `DisableNightShiftSupport=true` | **Applied** | Skips CoreBrightness.framework loading. Minor/unmeasurable impact. |
-
-## Remaining Experiments (Untested)
-
-These could still be tried but are unlikely to produce perceptible improvements given that `ForceScreenRefresh` already maximizes frame delivery:
-
-1. **`WindowSize`** — USB transfer window size in `Core` XML node. Theoretical throughput tuning but probably irrelevant for 1080p@60Hz.
-2. **`BandwidthAllocator`** — Bandwidth split across displays. Might matter with more displays or higher resolutions.
-3. **`ExtraModes`** — Additional resolutions via per-display `NivoSettings`. Only useful if you need non-standard modes.
-4. **`MaskProtocolErrors`** — Mask transient USB errors. Only useful if experiencing flickering.
+| XML tunables without `ForceScreenRefresh` | **Made things worse** | Tested `WindowSize=65536`, `BandwidthAllocator/WindowSize=65536`, `ContentHint=Graphics`, `ExtraModes=1`, `MaskProtocolErrors=1` all together with `ForceScreenRefresh=false`. Result: "brutal latency." These XML tunables cannot substitute for `ForceScreenRefresh` and may actually degrade performance when the GPU differ is active. |
 
 ## Conclusion
 
@@ -503,6 +495,48 @@ killall DisplayLinkUserAgent && sleep 2 && open "/Applications/DisplayLink Manag
 ```
 
 This disables the Metal GPU frame differ, forcing every captured frame to be sent as a full-screen update. The ~3-5% extra CPU usage is negligible on M-series chips and eliminates perceived choppiness from skipped/partially-updated frames.
+
+The XML-based tunables (`WindowSize`, `BandwidthAllocator`, `ContentHint`, `ExtraModes`, `MaskProtocolErrors`) in `.dlua.xml` were tested but provide no benefit and can make latency worse. **Do not use them as alternatives to `ForceScreenRefresh`.**
+
+---
+
+## DisplayLink Official GitHub Repos
+
+Analysis of [github.com/DisplayLink](https://github.com/DisplayLink) repositories:
+
+### EVDI — Frame Pacing Bug ([#512](https://github.com/DisplayLink/evdi/issues/512), [#562](https://github.com/DisplayLink/evdi/pull/562))
+
+The EVDI issue tracker contains the **root cause explanation** for the same choppiness problem that `ForceScreenRefresh` works around on macOS.
+
+[Issue #512](https://github.com/DisplayLink/evdi/issues/512) describes how the EVDI vblank timing is fundamentally broken:
+
+> *"evdi fires vblank immediately after the user-space driver called `DRM_EVDI_GRABPIX`... This in turn will generally result in the drm master immediately starting to render a new frame, thinking the display is fast enough to want it, which in turn leads to new update ready events... The result is wasted CPU/GPU on useless frames that get thrown away anyway."*
+
+[PR #562](https://github.com/DisplayLink/evdi/pull/562) fixes this on Linux by implementing **proper hrtimer-based vblank** at the display's actual refresh rate — the same pattern used by the `vkms` virtual display driver. This eliminates tearing and properly paces frames.
+
+**On macOS**, the analogous problem manifests differently: the `GpuDiffer` (Metal-based frame differ) sometimes incorrectly determines frames are "unchanged" and skips them, or the frame delivery pipeline has poor timing causing frames to arrive in bursts rather than evenly paced. `ForceScreenRefresh=true` brute-forces past this by disabling the differ entirely and sending every frame as a full-screen update.
+
+### DL-7450 SDK — Programmable Docks
+
+The [DL-7450 repo](https://github.com/DisplayLink/dl-7450) is an SDK for programming the dock's embedded MicroPython processor (DL-7450 chipset only). It exposes:
+
+- `DockInfo().monitors()` — query connected monitors, names, preferred modes
+- `DockControl().suspend_host_connection(bool)` — programmatically suspend/resume USB connection
+- `Splashscreen` — draw custom splash screens on the dock's displays
+- `usb.find()` — enumerate USB devices connected to the dock
+- GPIO, I2C, HTTP, MQTT, timers — full IoT capabilities
+
+This SDK is for the **DL-7450 chip** (newer generation), not applicable to the USB-C Dual-4K Dock tested here, but demonstrates that DisplayLink docks can be programmed at the firmware level.
+
+### Asahi Linux on Apple Silicon ([#559](https://github.com/DisplayLink/evdi/pull/559))
+
+The EVDI kernel module has been patched to compile on **Asahi Linux (Fedora on Apple Silicon M1 Pro)**. This means the Linux DisplayLink driver works on Apple Silicon via Asahi Linux as an alternative to the macOS driver — using EVDI + DRM instead of ScreenCaptureKit, which is architecturally very different.
+
+### Other Notable Issues
+
+- [#552](https://github.com/DisplayLink/evdi/issues/552) — Low refresh rate (below 20 FPS visually despite 60 Hz reported) after EVDI update. Same symptom class as the macOS choppiness.
+- [#522](https://github.com/DisplayLink/evdi/issues/522) — DisplayLinkManager consuming 14% CPU with no monitors connected. Related to the update loop spinning without proper throttling.
+- [#548](https://github.com/DisplayLink/evdi/pull/548) — CPU cache flush fix for cache coherency. Performance-relevant for the frame buffer pipeline.
 
 ---
 
@@ -521,9 +555,11 @@ This disables the Metal GPU frame differ, forcing every captured frame to be sen
 - **Linux driver**: Extracted from Makeself archive (`tail -n +714 | gzip -cd | tar xf -`)
 - **EVDI parameters**: From kernel module source code (`evdi_params.c`, `evdi_sysfs.c`)
 - **EVDI library API**: From `evdi_lib.h` — `evdi_connect2()` bandwidth parameters
+- **EVDI GitHub issues**: Frame pacing bug ([#512](https://github.com/DisplayLink/evdi/issues/512)), vblank fix ([#562](https://github.com/DisplayLink/evdi/pull/562)), Asahi Linux support ([#559](https://github.com/DisplayLink/evdi/pull/559))
 - **Cross-platform XML keys**: Found by cross-referencing strings in Linux `DisplayLinkManager` (aarch64) and macOS `DisplayLinkUserAgent` (arm64)
 - **ContentHint values**: From Linux `DisplayLinkManager` binary strings (confirmed macOS-absent via Ghidra)
 - **Windows driver**: Extracted from PE32 installer → 7z SFX → driver packages. Registry settings from embedded `ImportSettings.reg` and `dlcdcncm.inf`
+- **DL-7450 SDK**: From [github.com/DisplayLink/dl-7450](https://github.com/DisplayLink/dl-7450) — MicroPython dock programming interface
 
 ## Notes
 
@@ -531,4 +567,5 @@ This disables the Metal GPU frame differ, forcing every captured frame to be sen
 - DisplayLink on macOS works via screen capture (not native GPU output) — a fundamental Apple limitation
 - The Linux driver uses EVDI (virtual display interface in kernel) + DRM, which is architecturally different from macOS
 - Windows uses native GPU driver integration (WDDM), not screen capture — fundamentally different from both macOS and Linux
+- The frame pacing issue ([EVDI #512](https://github.com/DisplayLink/evdi/issues/512)) is the root cause of choppiness across platforms; `ForceScreenRefresh` on macOS and hrtimer vblank ([EVDI #562](https://github.com/DisplayLink/evdi/pull/562)) on Linux are different solutions to the same underlying problem
 - Tested April 2026. YMMV on different versions
