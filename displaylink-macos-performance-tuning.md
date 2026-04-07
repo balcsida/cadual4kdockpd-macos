@@ -473,21 +473,36 @@ New IOSurface arrives
 
 ---
 
-## TODO: Experiments to try on macOS
+## Experiments Completed (April 2026)
 
-The following experiments are based on cross-platform analysis but have **not been tested** yet:
+| Experiment | Result | Details |
+|---|---|---|
+| `ForceScreenRefresh=true` | **SUCCESS** | Disables GPU frame diffing. Noticeably smoother. Confirmed via Ghidra: skips `GpuDiffer` creation, every frame sent as full-screen update. **Recommended setting.** |
+| `ForceBackendAPI=ScreenCaptureKit` | **No effect** | v15.1.0 already uses ScreenCaptureKit natively. Stack trace sampling confirmed both modes use `SCStream` with zero `CGDisplayStream` calls. |
+| Debug logging via `.dlua.xml` Logger XML | **Failed** | macOS binary ignores Logger XML config entirely. Logs remain encrypted. The Linux `DLSupportTool.sh --debug` XML structure is not read by the macOS driver. |
+| `ContentHint=Graphics` in `.dlua.xml` | **No perceptible effect** | XML was accepted and survived restart, but no visible difference — likely because `ForceScreenRefresh` already sends full uncompressed frames, making encoder hints irrelevant. |
+| `DisableFluxGammaSupport=true` | **Applied** | Removes f.lux hook overhead. Minor/unmeasurable impact. |
+| `DisableNightShiftSupport=true` | **Applied** | Skips CoreBrightness.framework loading. Minor/unmeasurable impact. |
 
-1. **Enable plaintext debug logging** — Add the Logger XML config to `.dlua.xml` (structure documented above). If this produces readable logs, it would massively help further debugging.
+## Remaining Experiments (Untested)
 
-2. **Tune `WindowSize`** — Add `<value name="WindowSize">...</value>` under a `Core` XML node. Larger window = more USB throughput per transaction, at the cost of latency. Values likely map to USB transfer sizes.
+These could still be tried but are unlikely to produce perceptible improvements given that `ForceScreenRefresh` already maximizes frame delivery:
 
-3. **Tune `BandwidthAllocator`** — Add under `Core`. May control how bandwidth is split when multiple DisplayLink displays are connected.
+1. **`WindowSize`** — USB transfer window size in `Core` XML node. Theoretical throughput tuning but probably irrelevant for 1080p@60Hz.
+2. **`BandwidthAllocator`** — Bandwidth split across displays. Might matter with more displays or higher resolutions.
+3. **`ExtraModes`** — Additional resolutions via per-display `NivoSettings`. Only useful if you need non-standard modes.
+4. **`MaskProtocolErrors`** — Mask transient USB errors. Only useful if experiencing flickering.
 
-4. **Test `ContentHint` values** — Change from `Auto` to `Graphics` in the per-display Viewer node. Though only `Auto` is in the macOS binary strings, the C++ core that reads it is shared, so Linux values (`Game`/`Cinema`/`Photo`/`Graphics`) might still work.
+## Conclusion
 
-5. **Test `ExtraModes`** — Add under the per-display `NivoSettings` to potentially unlock additional resolutions.
+For macOS on Apple Silicon, **the single most impactful setting is:**
 
-6. **Test `MaskProtocolErrors`** — Could reduce display flickering caused by transient USB protocol errors.
+```bash
+defaults write com.displaylink.DisplayLinkUserAgent ForceScreenRefresh -bool true
+killall DisplayLinkUserAgent && sleep 2 && open "/Applications/DisplayLink Manager.app"
+```
+
+This disables the Metal GPU frame differ, forcing every captured frame to be sent as a full-screen update. The ~3-5% extra CPU usage is negligible on M-series chips and eliminates perceived choppiness from skipped/partially-updated frames.
 
 ---
 
