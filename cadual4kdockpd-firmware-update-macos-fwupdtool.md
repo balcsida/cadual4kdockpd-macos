@@ -38,6 +38,29 @@ Confirm the Genesys plugin is available:
 fwupdtool get-plugins | rg genesys
 ```
 
+## Automated Script
+
+This gist includes a walkthrough script for the full process:
+
+```bash
+./update-cadual4kdockpd-firmware-macos.sh
+```
+
+Useful safe modes:
+
+```bash
+# Walk through detection and show flash commands without writing firmware
+./update-cadual4kdockpd-firmware-macos.sh --dry-run
+
+# Extract, inspect, and report current versions only
+./update-cadual4kdockpd-firmware-macos.sh --no-flash
+```
+
+The script reports the detected hub firmware versions, maps `HUB_16` to
+`Hub_1_9392_L1.ROM` and `HUB_00` to `Hub_1_9392_L2.ROM`, asks for confirmation
+before firmware writes, and explains the known macOS final attach/reset warning
+if the hub already reports the target version after verify.
+
 ## Extract the Firmware ROMs
 
 Start with the vendor archive:
