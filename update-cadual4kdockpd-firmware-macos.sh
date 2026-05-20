@@ -9,7 +9,7 @@ EXPECTED_L2_SHA256="69ba8fe38a9c020bcca428bb795e10e177b2e5101fa58cfa2270c61df1ca
 ARCHIVE="${HOME}/Downloads/Patch_CADUAL4KDOCKPD.rar"
 WORK_DIR="${HOME}/Downloads/Patch_CADUAL4KDOCKPD_firmware"
 ASSUME_YES=0
-DRY_RUN=0
+DRY_RUN=1
 NO_FLASH=0
 FORCE=0
 DID_FLASH=0
@@ -31,7 +31,9 @@ Options:
                        Default: ~/Downloads/Patch_CADUAL4KDOCKPD_firmware
   --l1-device-id ID    Override device ID for Hub_1_9392_L1.ROM
   --l2-device-id ID    Override device ID for Hub_1_9392_L2.ROM
-  --dry-run            Walk through all steps but do not flash firmware
+  --flash              Enable firmware writes. Without this, the script is a
+                       dry run and only prints the fwupdtool flash commands.
+  --dry-run            Explicitly keep the default no-write dry-run behavior
   --no-flash           Extract, inspect, and report versions only
   --force              Flash even if a hub already reports 93.92
   -y, --yes            Auto-confirm prompts
@@ -112,12 +114,18 @@ parse_args() {
         L2_DEVICE_ID="$2"
         shift 2
         ;;
+      --flash)
+        DRY_RUN=0
+        NO_FLASH=0
+        shift
+        ;;
       --dry-run)
         DRY_RUN=1
         shift
         ;;
       --no-flash)
         NO_FLASH=1
+        DRY_RUN=1
         shift
         ;;
       --force)
@@ -424,6 +432,13 @@ main() {
   note "Archive:  $ARCHIVE"
   note "Work dir: $WORK_DIR"
   note "Target:   $TARGET_VERSION / raw $TARGET_RAW / hex 0x9392"
+  if [ "$NO_FLASH" -eq 1 ]; then
+    note "Mode:     no-flash report only"
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    note "Mode:     dry run, no firmware writes; pass --flash to enable writes"
+  else
+    note "Mode:     firmware writes enabled by --flash"
+  fi
 
   check_dependencies
   confirm "Start extraction and device inspection?" || die "Aborted by user"

@@ -102,10 +102,11 @@ run_help_test() {
   output="$("$SCRIPT" --help)"
   assert_contains "$output" "Usage:"
   assert_contains "$output" "--dry-run"
+  assert_contains "$output" "--flash"
   assert_contains "$output" "Patch_CADUAL4KDOCKPD.rar"
 }
 
-run_dry_run_test() {
+run_default_dry_run_test() {
   local tmp mock_bin archive output
   tmp="$(mktemp -d)"
   mock_bin="$tmp/bin"
@@ -114,7 +115,7 @@ run_dry_run_test() {
   archive="$tmp/Patch_CADUAL4KDOCKPD.rar"
   : >"$archive"
 
-  output="$(PATH="$mock_bin:/usr/bin:/bin" "$SCRIPT" --archive "$archive" --work-dir "$tmp/work" --dry-run --yes)"
+  output="$(PATH="$mock_bin:/usr/bin:/bin" "$SCRIPT" --archive "$archive" --work-dir "$tmp/work" --yes)"
 
   assert_contains "$output" "Dry run: skipping firmware write"
   assert_contains "$output" "HUB_16"
@@ -123,6 +124,6 @@ run_dry_run_test() {
 }
 
 run_help_test
-run_dry_run_test
+run_default_dry_run_test
 
 printf 'ok\n'

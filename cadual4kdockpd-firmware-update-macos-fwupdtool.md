@@ -46,14 +46,24 @@ This gist includes a walkthrough script for the full process:
 ./update-cadual4kdockpd-firmware-macos.sh
 ```
 
+By default, the script is a dry run. It extracts and validates the firmware,
+reports the detected hub versions, and prints the `fwupdtool install-blob`
+commands it would run, but it does not write firmware.
+
 Useful safe modes:
 
 ```bash
-# Walk through detection and show flash commands without writing firmware
+# Explicitly walk through detection and show flash commands without writing firmware
 ./update-cadual4kdockpd-firmware-macos.sh --dry-run
 
 # Extract, inspect, and report current versions only
 ./update-cadual4kdockpd-firmware-macos.sh --no-flash
+```
+
+Firmware writes require an explicit `--flash`:
+
+```bash
+./update-cadual4kdockpd-firmware-macos.sh --flash
 ```
 
 The script reports the detected hub firmware versions, maps `HUB_16` to
