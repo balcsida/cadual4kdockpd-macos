@@ -26,8 +26,15 @@ Before flashing, disconnect devices from the dock where practical. Leave only:
 ## Install Tools
 
 ```bash
-brew install fwupd unrar jq
+brew install fwupd jq
 ```
+
+No extra extraction tool is needed: `bsdtar`, which ships with macOS, reads both
+the vendor RAR and the self-extracting updater inside it. `unrar` works too
+(`brew install unrar`). Homebrew's `7zz`/`7z` fail on this RAR with
+"Unsupported Method", so the updater script tries `bsdtar`, `7zz`, `7z` and
+`unrar` in that order and uses the first one that succeeds. It skips extraction
+when ROM files with the SHA-256 values below are already in the work dir.
 
 Homebrew's `fwupd` package provides `fwupdtool`. On macOS this is enough; a
 Linux-style `fwupd` daemon or `fwupdmgr` is not required for this workflow.
@@ -80,11 +87,9 @@ RAR=~/Downloads/Patch_CADUAL4KDOCKPD.rar
 OUT=~/Downloads/Patch_CADUAL4KDOCKPD_firmware
 
 mkdir -p "$OUT/outer" "$OUT/roms"
-unrar x -o+ "$RAR" Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe "$OUT/outer/"
-unrar e -o+ \
-  "$OUT/outer/Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe" \
-  Hub_1_9392_L1.ROM Hub_1_9392_L2.ROM \
-  "$OUT/roms/"
+bsdtar -xf "$RAR" -C "$OUT/outer" Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe
+bsdtar -xf "$OUT/outer/Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe" \
+  -C "$OUT/roms" Hub_1_9392_L1.ROM Hub_1_9392_L2.ROM
 ```
 
 Expected files:
@@ -101,7 +106,8 @@ Known SHA256 values from the i-tec package:
 69ba8fe38a9c020bcca428bb795e10e177b2e5101fa58cfa2270c61df1ca3880  Hub_1_9392_L2.ROM
 ```
 
-If `unrar` is killed by macOS quarantine, remove quarantine from the Homebrew
+If you use `unrar` instead and it is killed by macOS quarantine, remove
+quarantine from the Homebrew
 binary and try again:
 
 ```bash
