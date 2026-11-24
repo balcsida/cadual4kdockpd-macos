@@ -62,22 +62,35 @@ printf 'unexpected fwupdtool args: %s\n' "$*" >&2
 exit 2
 MOCK
 
-  cat >"$dir/unrar" <<'MOCK'
+  # One mock for every extractor: only $MOCK_EXTRACTOR works, each call is logged.
+  cat >"$dir/bsdtar" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
-dest="${@: -1}"
+tool="$(basename "$0")"
+MOCK_ARGS="$*"
+printf '%s\n' "$tool" >>"$MOCK_LOG"
+[ "$tool" = "${MOCK_EXTRACTOR:-}" ] || exit 1
+dest=""
+case "$tool" in
+  bsdtar) while [ "$#" -gt 0 ]; do [ "$1" = "-C" ] && dest="$2"; shift; done ;;
+  unrar) dest="${*: -1}" ;;
+  *) for arg in "$@"; do case "$arg" in -o*) dest="${arg#-o}" ;; esac; done ;;
+esac
 mkdir -p "$dest"
-case "$*" in
-  *CADUAL4KDOCKPD_9392.exe*)
-    mkdir -p "$dest/Patch_CADUAL4KDOCKPD"
-    : >"$dest/Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe"
-    ;;
+case "$MOCK_ARGS" in
   *Hub_1_9392_L1.ROM*)
     printf 'l1' >"$dest/Hub_1_9392_L1.ROM"
     printf 'l2' >"$dest/Hub_1_9392_L2.ROM"
     ;;
+  *CADUAL4KDOCKPD_9392.exe*)
+    mkdir -p "$dest/Patch_CADUAL4KDOCKPD"
+    : >"$dest/Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe"
+    ;;
 esac
 MOCK
+  cp "$dir/bsdtar" "$dir/7zz"
+  cp "$dir/bsdtar" "$dir/7z"
+  cp "$dir/bsdtar" "$dir/unrar"
 
   cat >"$dir/shasum" <<'MOCK'
 #!/usr/bin/env bash
@@ -94,7 +107,7 @@ for path in "${@: -2}"; do
 done
 MOCK
 
-  chmod +x "$dir/fwupdtool" "$dir/unrar" "$dir/shasum"
+  chmod +x "$dir"/*
 }
 
 run_help_test() {
@@ -104,26 +117,98 @@ run_help_test() {
   assert_contains "$output" "--dry-run"
   assert_contains "$output" "--flash"
   assert_contains "$output" "Patch_CADUAL4KDOCKPD.rar"
+  assert_contains "$output" "bsdtar"
 }
 
-run_default_dry_run_test() {
-  local tmp mock_bin archive output
+# run_script EXTRACTOR [script args...]: sets $tmp, $log and $output; never fails itself.
+run_script() {
+  local mock_bin
   tmp="$(mktemp -d)"
+  log="$tmp/extractors.log"
   mock_bin="$tmp/bin"
   mkdir -p "$mock_bin"
   make_mock_bin "$mock_bin"
-  archive="$tmp/Patch_CADUAL4KDOCKPD.rar"
-  : >"$archive"
+  : >"$log"
+  : >"$tmp/Patch_CADUAL4KDOCKPD.rar"
+  status=0
+  output="$(MOCK_LOG="$log" MOCK_EXTRACTOR="$1" PATH="$mock_bin:/usr/bin:/bin" \
+    "$SCRIPT" --archive "$tmp/Patch_CADUAL4KDOCKPD.rar" --work-dir "$tmp/work" --yes "${@:2}" 2>&1)" || status=$?
+}
 
-  output="$(PATH="$mock_bin:/usr/bin:/bin" "$SCRIPT" --archive "$archive" --work-dir "$tmp/work" --yes)"
-
+assert_dry_run_ok() {
+  [ "$status" -eq 0 ] || fail "script exited $status: $output"
   assert_contains "$output" "Dry run: skipping firmware write"
   assert_contains "$output" "HUB_16"
   assert_contains "$output" "mock-l1"
   assert_contains "$output" "already reports 93.92; skipping"
 }
 
+# Each extractor works on its own, after every tool before it has failed.
+run_extractor_fallback_test() {
+  local tool
+  for tool in bsdtar 7zz 7z unrar; do
+    run_script "$tool"
+    assert_dry_run_ok
+    assert_contains "$output" "Extracted with $tool"
+    [ "$(tail -n 1 "$log")" = "$tool" ] || fail "$tool was not the last extractor tried"
+    [ -f "$tmp/work/roms/Hub_1_9392_L2.ROM" ] || fail "$tool did not extract the ROMs"
+  done
+  [ "$(tr '\n' ' ' <"$log")" = "bsdtar 7zz 7z unrar bsdtar 7zz 7z unrar " ] ||
+    fail "wrong order for unrar fallback: $(tr '\n' ' ' <"$log")"
+}
+
+run_no_working_extractor_test() {
+  run_script none
+  [ "$status" -ne 0 ] || fail "expected failure when no extractor works"
+  assert_contains "$output" "No working extractor"
+}
+
+# Valid ROMs in the work dir: no extractor is called and no archive is needed.
+run_preextracted_roms_test() {
+  local mock_bin
+  tmp="$(mktemp -d)"
+  log="$tmp/extractors.log"
+  mock_bin="$tmp/bin"
+  mkdir -p "$mock_bin" "$tmp/work/roms"
+  make_mock_bin "$mock_bin"
+  : >"$log"
+  printf 'l1' >"$tmp/work/roms/Hub_1_9392_L1.ROM"
+  printf 'l2' >"$tmp/work/roms/Hub_1_9392_L2.ROM"
+  status=0
+  output="$(MOCK_LOG="$log" MOCK_EXTRACTOR=none PATH="$mock_bin:/usr/bin:/bin" \
+    "$SCRIPT" --archive "$tmp/missing.rar" --work-dir "$tmp/work" --yes 2>&1)" || status=$?
+  assert_dry_run_ok
+  assert_contains "$output" "Using previously extracted ROM files"
+  [ ! -s "$log" ] || fail "extractor was called despite valid ROMs: $(cat "$log")"
+}
+
+# ROMs that fail the pinned hash are never used, even without --flash.
+run_bad_hash_test() {
+  local mock_bin
+  tmp="$(mktemp -d)"
+  mock_bin="$tmp/bin"
+  mkdir -p "$mock_bin" "$tmp/work/roms"
+  make_mock_bin "$mock_bin"
+  rm "$mock_bin/shasum"
+  printf 'l1' >"$tmp/work/roms/Hub_1_9392_L1.ROM"
+  printf 'l2' >"$tmp/work/roms/Hub_1_9392_L2.ROM"
+  status=0
+  output="$(MOCK_LOG="$tmp/log" MOCK_EXTRACTOR=bsdtar PATH="$mock_bin:/usr/bin:/bin" \
+    "$SCRIPT" --archive "$tmp/missing.rar" --work-dir "$tmp/work" --yes 2>&1)" || status=$?
+  [ "$status" -ne 0 ] || fail "expected failure for ROMs with wrong hashes"
+  assert_contains "$output" "Archive not found"
+  : >"$tmp/missing.rar"
+  status=0
+  output="$(MOCK_LOG="$tmp/log" MOCK_EXTRACTOR=bsdtar PATH="$mock_bin:/usr/bin:/bin" \
+    "$SCRIPT" --archive "$tmp/missing.rar" --work-dir "$tmp/work" --yes 2>&1)" || status=$?
+  [ "$status" -ne 0 ] || fail "expected failure for extracted ROMs with wrong hashes"
+  assert_contains "$output" "Unexpected SHA256"
+}
+
 run_help_test
-run_default_dry_run_test
+run_extractor_fallback_test
+run_no_working_extractor_test
+run_preextracted_roms_test
+run_bad_hash_test
 
 printf 'ok\n'
