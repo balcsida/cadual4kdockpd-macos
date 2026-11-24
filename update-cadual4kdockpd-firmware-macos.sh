@@ -44,7 +44,10 @@ Environment overrides:
   L2_DEVICE_ID         Same as --l2-device-id
 
 Required tools:
-  brew install fwupd unrar jq
+  brew install fwupd jq
+  Extraction uses the first of bsdtar (ships with macOS), 7zz, 7z or unrar
+  that can read the archive. No extractor is needed when ROM files matching
+  the pinned SHA-256 values are already in the work dir.
 EOF
 }
 
@@ -151,19 +154,46 @@ check_dependencies() {
   local missing=""
   local cmd
 
-  for cmd in fwupdtool unrar jq shasum; do
+  for cmd in fwupdtool jq shasum; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       missing="$missing $cmd"
     fi
   done
 
   if [ -n "$missing" ]; then
-    die "Missing required tools:$missing. Install with: brew install fwupd unrar jq"
+    die "Missing required tools:$missing. Install with: brew install fwupd jq"
   fi
 }
 
 hash_file() {
   shasum -a 256 "$1" | awk '{print $1; exit}'
+}
+
+roms_valid() {
+  [ -f "$L1_ROM" ] && [ -f "$L2_ROM" ] &&
+    [ "$(hash_file "$L1_ROM")" = "$EXPECTED_L1_SHA256" ] &&
+    [ "$(hash_file "$L2_ROM")" = "$EXPECTED_L2_SHA256" ]
+}
+
+# extract_members ARCHIVE DEST MEMBER...: try each installed extractor in turn.
+# A tool that is installed may still fail (Homebrew 7zz cannot decode this RAR).
+extract_members() {
+  local archive="$1"
+  local dest="$2"
+  local tool
+  shift 2
+
+  for tool in bsdtar 7zz 7z unrar; do
+    command -v "$tool" >/dev/null 2>&1 || continue
+    case "$tool" in
+      bsdtar) bsdtar -xf "$archive" -C "$dest" "$@" ;;
+      unrar) unrar x -o+ "$archive" "$@" "$dest/" ;;
+      *) "$tool" x -y "-o$dest" "$archive" "$@" >/dev/null ;;
+    esac && { note "Extracted with $tool"; return 0; }
+    note "$tool could not extract $archive; trying the next tool"
+  done
+
+  die "No working extractor for $archive. Tried bsdtar, 7zz, 7z, unrar; install one with: brew install unrar"
 }
 
 extract_firmware() {
@@ -173,26 +203,23 @@ extract_firmware() {
   L1_ROM="$ROM_DIR/Hub_1_9392_L1.ROM"
   L2_ROM="$ROM_DIR/Hub_1_9392_L2.ROM"
 
+  if roms_valid; then
+    step "Using previously extracted ROM files"
+    note "$L1_ROM"
+    note "$L2_ROM"
+    return 0
+  fi
+
   [ -f "$ARCHIVE" ] || die "Archive not found: $ARCHIVE"
 
   mkdir -p "$OUTER_DIR" "$ROM_DIR"
 
-  if [ ! -f "$OUTER_EXE" ]; then
-    step "Extracting Windows updater from vendor RAR"
-    unrar x -o+ "$ARCHIVE" Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe "$OUTER_DIR/"
-  else
-    step "Using previously extracted updater"
-    note "$OUTER_EXE"
-  fi
+  # Always redo both levels: a failed extractor can leave a truncated file behind.
+  step "Extracting Windows updater from vendor RAR"
+  extract_members "$ARCHIVE" "$OUTER_DIR" Patch_CADUAL4KDOCKPD/CADUAL4KDOCKPD_9392.exe
 
-  if [ ! -f "$L1_ROM" ] || [ ! -f "$L2_ROM" ]; then
-    step "Extracting raw Genesys ROM files from updater"
-    unrar e -o+ "$OUTER_EXE" Hub_1_9392_L1.ROM Hub_1_9392_L2.ROM "$ROM_DIR/"
-  else
-    step "Using previously extracted ROM files"
-    note "$L1_ROM"
-    note "$L2_ROM"
-  fi
+  step "Extracting raw Genesys ROM files from updater"
+  extract_members "$OUTER_EXE" "$ROM_DIR" Hub_1_9392_L1.ROM Hub_1_9392_L2.ROM
 }
 
 verify_hashes() {
