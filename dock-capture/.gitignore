@@ -1,0 +1,13 @@
+# Allow-list: only sources and notes are tracked in this folder.
+# Firmware images, flash dumps, compiled tools, captures and logs stay local:
+# they are vendor binaries or contain device serial numbers.
+*
+!*/
+!.gitignore
+!REPORT.md
+!*.py
+!*.sh
+!*.swift
+!gw-updater/PROTOCOL.md
+!gw-updater/GHIDRA.md
+!gw-updater/*-lengths.txt
