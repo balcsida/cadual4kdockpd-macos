@@ -24,6 +24,9 @@ The failure is decided at the USB-C attach, before USB and before any PD message
 
 - Updating both hubs from 93.05 to 93.92 did not remove the failure: after the flash, 4 of 7 replugs
   connected and 3 looped, with the same loop signature. See "After the flash".
+- 2026-11-25: switching off one setting (Try.SRC) in the dock's TI power controller removed the loop on
+  this unit: 11 of 11 fresh attaches connected, including 7 that started with the Mac as source, the
+  case that looped every time before. See "Test 10".
 
 Of A-D: A is the nearest (medium-high confidence), reworded as "the Type-C attach/power-role resolution
 keeps restarting; the hubs never get as far as reacting". B, C and D are ruled out for this failure
@@ -107,6 +110,18 @@ the firmware's local-power-change reboot path specifically.
   devices in about 1.5 s. The status register again split the outcomes without exception.
 - Since no hub enumerates during a loop, hub firmware is not expected to matter there; this result agrees.
 
+## Test 9: Mac already charging from MagSafe (100 W), hubs on 93.92
+
+- 14:09-14:15, left rear port: about 15 fresh attaches, 4 connected (14:09:31, 14:09:56, 14:11:17,
+  14:11:37), the rest looped. Same rate as on battery; MagSafe power does not bias the outcome.
+- Loop signature unchanged (0x100000ff, Mac = source). Connected status is 0x1000b25d instead of
+  0x100cb25d: Mac still sink-role on the port, but keeps drawing from MagSafe (adapter stays 100 W).
+- Count is approximate: several unplug gaps were 4-6 s, too short to tell from missed samples. The connect
+  at 14:09:31 followed a 6 s gap in a loop; a self-recovery cannot be excluded there, a quick replug is
+  more likely.
+- Reported by the user, not captured: the same dock model shows the same behaviour on other similar
+  MacBook Pros in the office, on other units of the dock, and on the right-hand port of this Mac.
+
 ## Reference signatures (from fwupd resetting the hubs, PD steady at 85 W)
 
 - First hub reset: both hub pairs and DisplayLink drop, back in about 5 s. This is what B would look like.
@@ -134,3 +149,65 @@ Neither resembles the loop.
 - When the dock last worked reliably and whether anything changed since; asked, not answered.
 - Capture limits: ioreg PD counters lag by minutes (totals only); 35 s sampler gap around 10:45; the
   dock was reset 5 times by fwupd between 11:21:13 and 11:23:07.
+
+## Addendum 2026-11-25: the dock's power-controller configuration, read over USB
+
+- The dock's management chip (Good Way, USB 065f:f60f) speaks the protocol of Good Way's updater for the
+  same platform (`DUD15X0D1_Update_E108.exe`, published by Cable Matters). Details: `gw-updater/PROTOCOL.md`.
+- Versions on this dock: chip bootloader E101 (Jun 25 2018), chip application E103 (2018-12-03),
+  TI controller firmware 1.38.6 (2018-11-29). The Cable Matters bundle is E109 with TI 1.38.6 (2020-05-04).
+- The TI flash was read indirectly, read only, through the chip's verify command (16-bit byte sum of the
+  first N bytes; 615 sums). It equals the Cable Matters TI image except one configuration bit
+  (AutomaticIDRequest: 1 on the dock, 0 in the Cable Matters image) and the configuration checksum.
+  Exact for 512 bytes of configuration; matching sums for everything else.
+- Relevant configuration on the dock: source/sink dual role, **TrySRCSupport = 1**, ExternallyPowered,
+  InitiateSwapToSource, all power switches source-only.
+
+Interpretation (inferred from the configuration and the timing, not observed on the CC line): the loop
+is the dock's Try.SRC behaviour. When the Mac wins the first role resolution and becomes source, the
+dock, about one debounce time later, withdraws its sink termination to try to become source itself.
+That is the "plug lost 152 ms after attach". The Mac does not come back as a sink within the dock's try
+window, the dock's wait-as-sink timer runs out, and the pair meets again the same way about 0.87 s later.
+When the dock happens to be source first, the Mac attaches as sink and everything works; the logs show
+every success starts as sink with no failed attempt before it.
+
+This refines the earlier conclusion: A, as reworded (role resolution keeps restarting). The cause would
+be a dock configuration choice meeting the Mac's timing, not a fault in one unit, which fits the same
+behaviour across the office. Nothing had been written to the dock at this point.
+
+## Test 10: Try.SRC switched off in the dock (2026-11-25, 17:31-18:32)
+
+Change: one configuration bit of the TI controller (System Configuration, TrySRCSupport 1 -> 0) in the
+low firmware region, plus that region's checksum: 5 of 168,580 bytes
+(`gw-updater/itec-ti-flash-patched-trysrc0.bin`). The high region keeps the original configuration as the
+controller's fallback. Written over USB through the dock's management chip (full chip erase, 3,295 data
+frames, 58 s), verified by 44 read-back sums and 87 exact bytes, then the dock was power-cycled with the
+cable out of the Mac. Same Mac, port and cable as before. Capture: `sampler-patched.tsv`,
+`syslog-patched.log`. Steps and tool: `gw-updater/PROTOCOL.md`, `gw-updater/tools/tiwrite.swift`.
+
+| Fresh attaches | Before (3 series, hubs 93.05 and 93.92) | After the change |
+|---|---|---|
+| Total | 39 | 11 |
+| Connected | about 13 | 11 |
+| Started with the Mac as sink | all connected | 4, all connected |
+| Started with the Mac as source | all looped | 7, all connected |
+
+- A Mac-source-first attach now runs: status 0x100000ff or 0x108240ff (Mac source) for 0.25-0.5 s, then
+  0x1080b0df and 0x108cb2df (Mac sink, still USB host), with no detach in between: one
+  `[Port-USB-C@1: CC] active: YES` per plug-in. The dock then offers five power levels and the Mac takes
+  20 V / 4.25 A (85 W). All 10 USB devices are present 1.8-2.0 s after plug-in (1.5-1.6 s when the dock
+  is source first).
+- The Mac's swap counters (`PwrRoleSwapCount`) did not move. The role change is read from the status
+  register and from the `Power In` source appearing about 0.3 s after the attach.
+- Longest observation: 44 min without any state change (17:48-18:32).
+- One difference: 1 of the 7 source-first attaches (17:48:27) settled at 20 V / 3 A (60 W) and stayed
+  there. In that attach the Mac's status showed connection state 6 instead of 7 (TI layout: cable marker
+  not seen). Likely the Mac limits its request to 3 A when it has not identified the cable itself; when
+  the dock is source first, the dock identifies the cable. The next plug-in gave 85 W again.
+
+This supports the interpretation above: the loop was the dock's Try.SRC behaviour meeting the Mac's
+timing, and it is a configuration matter, not a hardware fault of the unit.
+
+Not tested: other Mac ports, the other cable end, MagSafe connected, sleep and wake, other Macs, other
+units of the dock, runs longer than 44 min. To go back, write `gw-updater/itec-ti-flash-original.bin`
+with the same tool.
