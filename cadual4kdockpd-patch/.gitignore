@@ -1,0 +1,5 @@
+/target
+# output of building the Windows app
+/app
+/windows/bin
+/windows/obj

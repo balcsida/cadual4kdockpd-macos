@@ -1,0 +1,28 @@
+[package]
+name = "cadual4kdockpd-patch"
+version = "0.1.0"
+edition = "2024"
+description = "Switches Try.SRC off in the i-tec CADUAL4KDOCKPD dock's power controller, over USB"
+publish = false
+
+[dependencies]
+# shared, not exclusive, access on macOS: the mode the first tool used when it patched a real dock
+hidapi = { version = "2.6", features = ["macos-shared-device"] }
+sha2 = "0.11"
+
+[target.'cfg(not(windows))'.dependencies]
+# the optional hub update; libusb is compiled in. Windows does not let a program talk to a hub this way
+rusb = { version = "0.9", features = ["vendored"] }
+
+[features]
+# Builds the firmware into the program, from the files named by these environment variables (absolute
+# paths): DOCK_IMAGE_FILE (power controller image), DOCK_HUB_L1_FILE and DOCK_HUB_L2_FILE (i-tec's hub
+# images). Such a build contains vendor firmware: do not publish it.
+embedded-image = []
+
+[profile.release]
+strip = true
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
