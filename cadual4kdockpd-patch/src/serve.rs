@@ -205,8 +205,12 @@ struct Files {
 
 impl Files {
     fn find() -> Self {
+        // The Windows app is a single file and may carry the image at its own end; it names itself here.
+        let carried = std::env::var("DOCK_IMAGE_IN").ok().and_then(|file| crate::images(Some(&file)).ok());
         let images = if crate::EMBEDDED_IMAGE.is_some() {
             crate::images(None)
+        } else if let Some(carried) = carried {
+            Ok(carried)
         } else {
             match find_file(&IMAGE_FILES) {
                 Some(file) => crate::images(Some(&file.display().to_string())),
