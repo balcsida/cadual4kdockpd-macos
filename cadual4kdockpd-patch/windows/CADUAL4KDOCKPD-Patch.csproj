@@ -1,11 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- The WinUI 3 window. Build on Windows: dotnet publish -c Release (see ../README.md). -->
+  <!-- The WinUI 3 window. Build on Windows: dotnet build -c Release -o ..\app (see ../README.md). -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>DockPatch</RootNamespace>
-    <AssemblyName>CADUAL4KDOCKPD-Patch</AssemblyName>
+    <!-- Not "CADUAL4KDOCKPD-Patch": on Windows that is the same file name as the engine, cadual4kdockpd-patch.exe -->
+    <AssemblyName>CADUAL4KDOCKPD-Patch-App</AssemblyName>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64</Platforms>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

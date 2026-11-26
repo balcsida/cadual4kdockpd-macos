@@ -24,7 +24,8 @@ jobs:
           dotnet-version: 10.0.x
       - run: cargo test
       - run: cargo build --release
-      - run: dotnet publish windows -c Release -o app
+      # build, not publish: publish leaves out the app's own resource file (.pri), and the app then fails at start
+      - run: dotnet build windows -c Release -o app
       - run: Copy-Item target/release/cadual4kdockpd-patch.exe app/
       - name: Start the app and take a picture of the screen
         shell: powershell
@@ -33,7 +34,7 @@ jobs:
           $files = Get-ChildItem app -Recurse -File
           Write-Host "app folder: $($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB)) MB"
           $files | Where-Object { $_.Extension -notin '.dll', '.mui', '.winmd' } | ForEach-Object { Write-Host "  $($_.FullName.Substring($PWD.Path.Length + 5))  $($_.Length)" }
-          $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch.exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
+          $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch-App.exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
           Start-Sleep -Seconds 20
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen

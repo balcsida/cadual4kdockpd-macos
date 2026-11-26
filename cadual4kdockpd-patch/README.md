@@ -119,12 +119,13 @@ DOCK_UPDATER=/path/to/DUD15X0D1_Update_E108.exe cargo test -- --ignored   # imag
 
   ```sh
   cargo build --release
-  dotnet publish windows -c Release -o app
+  dotnet build windows -c Release -o app
   copy target\release\cadual4kdockpd-patch.exe app\
   ```
 
-  `app\CADUAL4KDOCKPD-Patch.exe` is the window; the folder needs nothing installed (Windows 10 1809 or
-  later, 64-bit). `.github/workflows/windows-app.yml` at the top of the repository does the same on
+  `app\CADUAL4KDOCKPD-Patch-App.exe` is the window; the folder needs nothing installed (Windows 10 1809 or
+  later, 64-bit). Use `build`, not `publish`: publish leaves out the app's resource file and the window
+  then fails at start. `.github/workflows/windows-app.yml` at the top of the repository does the same on
   GitHub and keeps the folder as the artifact of the run.
 - **Windows engine from a Mac:** `cargo build --release --target x86_64-pc-windows-gnu` (needs `mingw-w64`)
   gives `cadual4kdockpd-patch.exe`, the command-line tool and engine. It can replace the one in the
