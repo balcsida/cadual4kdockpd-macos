@@ -66,15 +66,19 @@ jobs:
           }
           Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB)) MB" }
           Test-Start 'app\CADUAL4KDOCKPD-Patch-App.exe' 'window.png'
-          # A build for internal use gets a firmware image attached to the end of the exe and a plainer
-          # name. Neither may stop it from starting; stand-in bytes are enough to test that here.
-          $renamed = "$PWD\CADUAL4KDOCKPD Patch.exe"
-          Copy-Item app\CADUAL4KDOCKPD-Patch-App.exe $renamed
+          # A build for internal use gets a firmware image attached to the end of the exe, and people
+          # rename files. Neither may stop the app from starting; stand-in bytes are enough to test that.
+          New-Item -ItemType Directory other | Out-Null
+          $attached = "$PWD\other\CADUAL4KDOCKPD-Patch-App.exe"
+          Copy-Item app\CADUAL4KDOCKPD-Patch-App.exe $attached
           $bytes = New-Object byte[] 168580
           (New-Object Random 1).NextBytes($bytes)
-          $stream = [IO.File]::Open($renamed, 'Append')
+          $stream = [IO.File]::Open($attached, 'Append')
           $stream.Write($bytes, 0, $bytes.Length)
           $stream.Close()
+          Test-Start $attached 'window-attached.png'
+          $renamed = "$PWD\other\CADUAL4KDOCKPD Patch (1).exe"
+          Copy-Item $attached $renamed
           Test-Start $renamed 'window-renamed.png'
       - uses: actions/upload-artifact@v7
         if: always()
