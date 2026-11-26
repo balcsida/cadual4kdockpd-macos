@@ -30,7 +30,10 @@ jobs:
         shell: powershell
         run: |
           $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
-          $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch.exe -PassThru
+          $files = Get-ChildItem app -Recurse -File
+          Write-Host "app folder: $($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB)) MB"
+          $files | Where-Object { $_.Extension -notin '.dll', '.mui', '.winmd' } | ForEach-Object { Write-Host "  $($_.FullName.Substring($PWD.Path.Length + 5))  $($_.Length)" }
+          $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch.exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
           Start-Sleep -Seconds 20
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
@@ -45,7 +48,11 @@ jobs:
           if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
           if ($problem) {
             Write-Host "FAILED: $problem"
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 1, 2; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue |
+            Write-Host "--- what the app wrote"; Get-Content app-stderr.txt, app-stdout.txt -ErrorAction SilentlyContinue
+            Write-Host "--- error files"; Get-ChildItem $env:TEMP -Filter 'CADUAL4KDOCKPD*' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
+            Write-Host "--- event log"
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-3) } -ErrorAction SilentlyContinue |
+              Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' } |
               Format-List TimeCreated, ProviderName, Message
             exit 1
           }

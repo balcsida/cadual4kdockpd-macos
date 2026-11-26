@@ -15,8 +15,8 @@ public partial class App : Application
         {
             if (!started)
             {
-                Program.Report("CADUAL4KDOCKPD Patch could not start.", e.Exception);
-                Environment.Exit(1);
+                Program.Report($"CADUAL4KDOCKPD Patch could not start: {e.Message}", e.Exception);
+                Environment.Exit(3);
             }
             // Later on the window stays open: the engine carries on by itself, and its result must stay visible.
             e.Handled = true;

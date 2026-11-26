@@ -30,6 +30,7 @@ public static class Program
         catch (Exception e)
         {
             Report("CADUAL4KDOCKPD Patch could not start.", e);
+            Environment.ExitCode = 2;
         }
     }
 
@@ -39,6 +40,7 @@ public static class Program
         var text = $"{what}\n\n{e}";
         try
         {
+            Console.Error.WriteLine(text);
             File.WriteAllText(ErrorFile, text);
         }
         catch (Exception)
