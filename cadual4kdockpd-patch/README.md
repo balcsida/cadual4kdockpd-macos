@@ -115,6 +115,8 @@ DOCK_UPDATER=/path/to/DUD15X0D1_Update_E108.exe cargo test -- --ignored   # imag
   and Intel (macOS 14 or later; building needs Xcode), with an icon drawn at build time. The window and
   the engine both sit in `Contents/MacOS`. It is signed for local use only, not notarized: on another
   Mac, run `xattr -dr com.apple.quarantine "CADUAL4KDOCKPD Patch.app"` before opening it.
+  `.github/workflows/macos-app.yml` at the top of the repository does the same on GitHub, starts the app
+  as a test and keeps it, zipped, as the artifact of the run.
 - **Windows app:** one exe. WinUI 3 can only be built on Windows; there, with the .NET 10 SDK and Rust:
 
   ```sh

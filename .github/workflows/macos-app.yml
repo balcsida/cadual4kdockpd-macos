@@ -1,0 +1,56 @@
+# Builds the Mac app: the SwiftUI window plus the Rust engine it runs, for Apple silicon and Intel,
+# without any firmware. The run also starts the app once and keeps a picture of the screen.
+# Results: the artifacts "CADUAL4KDOCKPD-Patch-macos" (a zip holding the app) and "mac-window-picture".
+# The app is signed for local use only: after downloading it, clear the download mark as the README says.
+name: Mac app
+
+on:
+  push:
+    paths:
+      - cadual4kdockpd-patch/**
+      - .github/workflows/macos-app.yml
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: cadual4kdockpd-patch
+    steps:
+      - uses: actions/checkout@v7
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - run: cargo test
+      - run: packaging/bundle-macos.sh
+      - name: Start the app and take a picture of the screen
+        run: |
+          app="target/bundle/CADUAL4KDOCKPD Patch.app"
+          codesign --verify --strict --deep "$app"
+          echo "window: $(lipo -archs "$app/Contents/MacOS/CADUAL4KDOCKPD Patch"), engine: $(lipo -archs "$app/Contents/MacOS/cadual4kdockpd-patch")"
+          open "$app"
+          sleep 15
+          screencapture -x window.png || echo "no picture: taking one is not allowed here"
+          problem=""
+          pgrep -f "Contents/MacOS/CADUAL4KDOCKPD Patch" > /dev/null || problem="the app is not running"
+          [ -n "$problem" ] || pgrep -f "Contents/MacOS/cadual4kdockpd-patch serve" > /dev/null || problem="the app did not start its engine"
+          pkill -f "Contents/MacOS/CADUAL4KDOCKPD Patch" || true
+          sleep 4
+          [ -n "$problem" ] || ! pgrep -f "Contents/MacOS/cadual4kdockpd-patch serve" > /dev/null || problem="the engine kept running after the app was gone"
+          if [ -n "$problem" ]; then
+            echo "FAILED: $problem"
+            ls ~/Library/Logs/DiagnosticReports 2> /dev/null | tail -5
+            exit 1
+          fi
+          echo "the app started, runs its engine, and the engine ends with it"
+      # one zip made by ditto: an artifact on its own would lose the app's executable permissions
+      - run: ditto -c -k --keepParent "target/bundle/CADUAL4KDOCKPD Patch.app" CADUAL4KDOCKPD-Patch-macos.zip
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: mac-window-picture
+          path: cadual4kdockpd-patch/window.png
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CADUAL4KDOCKPD-Patch-macos
+          path: cadual4kdockpd-patch/CADUAL4KDOCKPD-Patch-macos.zip
