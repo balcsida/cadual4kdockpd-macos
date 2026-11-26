@@ -9,8 +9,11 @@
 # image and to i-tec's two hub images) the firmware is built into the app, so the app needs no files
 # next to it. Such an app contains vendor firmware: do not publish it.
 #
-# The app is signed for local use only (ad hoc), not notarized. A Mac that received it by chat, mail
-# or browser refuses to open it until the download mark is cleared:
+# Without SIGN_IDENTITY the app is signed for local use only (ad hoc). With SIGN_IDENTITY set to a
+# code signing identity (a name or fingerprint from `security find-identity -v -p codesigning`) it is
+# signed with that, with the hardened runtime and a timestamp. Other Macs accept only a "Developer ID
+# Application" identity plus Apple's notarization, which this script does not do; in every other case
+# a Mac that received the app by chat, mail or browser refuses it until the download mark is cleared:
 #   xattr -dr com.apple.quarantine "CADUAL4KDOCKPD Patch.app"
 set -eu
 cd "$(dirname "$0")/.."
@@ -71,8 +74,13 @@ cat > "$APP/Contents/Info.plist" <<EOF
 EOF
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
-codesign --force --sign - "$APP/Contents/MacOS/$BIN"
-codesign --force --sign - "$APP"
+if [ -n "${SIGN_IDENTITY:-}" ]; then
+    set -- --options runtime --timestamp --sign "$SIGN_IDENTITY"
+else
+    set -- --sign -
+fi
+codesign --force "$@" "$APP/Contents/MacOS/$BIN"
+codesign --force "$@" "$APP"
 codesign --verify --strict "$APP"
 rm -rf "$WORK"
 echo "built $APP ($(lipo -archs "$APP/Contents/MacOS/$NAME")${FEATURES:+, firmware built in})"
