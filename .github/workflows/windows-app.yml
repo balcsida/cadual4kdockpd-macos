@@ -29,44 +29,58 @@ jobs:
       - name: Start the app and take a picture of the screen
         shell: powershell
         run: |
-          $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
-          Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB)) MB" }
-          $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch-App.exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
-          # the first start unpacks the exe, so the window can take a while
-          foreach ($second in 1..120) {
-            Start-Sleep -Seconds 1
-            $app.Refresh()
-            if ($app.HasExited -or $app.MainWindowHandle -ne 0) { break }
-          }
-          Write-Host "waited $second s for the window"
-          Start-Sleep -Seconds 8
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
-          $picture = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
-          [System.Drawing.Graphics]::FromImage($picture).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
-          $picture.Save("$PWD\window.png")
-          $app.Refresh()
-          $problem = if (Test-Path $errorFile) { Get-Content $errorFile -Raw }
-            elseif ($app.HasExited) { "the app exited with code $($app.ExitCode)" }
-            elseif ($app.MainWindowHandle -eq 0) { 'the app is running but has no window' }
-            elseif (-not (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { 'the app did not start its engine' }
-          if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
-          if ($problem) {
-            Write-Host "FAILED: $problem"
-            Write-Host "--- what the app wrote"; Get-Content app-stderr.txt, app-stdout.txt -ErrorAction SilentlyContinue
-            Write-Host "--- error files"; Get-ChildItem $env:TEMP -Filter 'CADUAL4KDOCKPD*' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
-            Write-Host "--- event log"
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-4) } -ErrorAction SilentlyContinue |
-              Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' } |
-              Format-List TimeCreated, ProviderName, Message
-            exit 1
+          $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
+          function Test-Start($exe, $pictureFile) {
+            $app = Start-Process -FilePath $exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
+            # the first start unpacks the exe, so the window can take a while
+            foreach ($second in 1..120) {
+              Start-Sleep -Seconds 1
+              $app.Refresh()
+              if ($app.HasExited -or $app.MainWindowHandle -ne 0) { break }
+            }
+            Write-Host "${exe}: waited $second s for the window"
+            Start-Sleep -Seconds 8
+            $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $picture = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            [System.Drawing.Graphics]::FromImage($picture).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+            $picture.Save("$PWD\$pictureFile")
+            $app.Refresh()
+            $problem = if (Test-Path $errorFile) { Get-Content $errorFile -Raw }
+              elseif ($app.HasExited) { "the app exited with code $($app.ExitCode)" }
+              elseif ($app.MainWindowHandle -eq 0) { 'the app is running but has no window' }
+              elseif (-not (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { 'the app did not start its engine' }
+            if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
+            Start-Sleep -Seconds 4
+            if (-not $problem -and (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { $problem = 'the engine kept running after the window was gone' }
+            if ($problem) {
+              Write-Host "FAILED: ${exe}: $problem"
+              Write-Host "--- what the app wrote"; Get-Content app-stderr.txt, app-stdout.txt -ErrorAction SilentlyContinue
+              Write-Host "--- event log"
+              Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-4) } -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' } |
+                Format-List TimeCreated, ProviderName, Message
+              exit 1
+            }
+            Write-Host "${exe}: started, has a window, runs its engine, and the engine ends with it"
           }
-          Write-Host 'the app started, has a window and runs its engine'
+          Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB)) MB" }
+          Test-Start 'app\CADUAL4KDOCKPD-Patch-App.exe' 'window.png'
+          # A build for internal use gets a firmware image attached to the end of the exe and a plainer
+          # name. Neither may stop it from starting; stand-in bytes are enough to test that here.
+          $renamed = "$PWD\CADUAL4KDOCKPD Patch.exe"
+          Copy-Item app\CADUAL4KDOCKPD-Patch-App.exe $renamed
+          $bytes = New-Object byte[] 168580
+          (New-Object Random 1).NextBytes($bytes)
+          $stream = [IO.File]::Open($renamed, 'Append')
+          $stream.Write($bytes, 0, $bytes.Length)
+          $stream.Close()
+          Test-Start $renamed 'window-renamed.png'
       - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: window-picture
-          path: cadual4kdockpd-patch/window.png
+          path: cadual4kdockpd-patch/window*.png
       - uses: actions/upload-artifact@v7
         with:
           name: CADUAL4KDOCKPD-Patch-windows

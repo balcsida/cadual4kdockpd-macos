@@ -115,21 +115,20 @@ DOCK_UPDATER=/path/to/DUD15X0D1_Update_E108.exe cargo test -- --ignored   # imag
   and Intel (macOS 14 or later; building needs Xcode), with an icon drawn at build time. The window and
   the engine both sit in `Contents/MacOS`. It is signed for local use only, not notarized: on another
   Mac, run `xattr -dr com.apple.quarantine "CADUAL4KDOCKPD Patch.app"` before opening it.
-- **Windows app:** WinUI 3 can only be built on Windows. There, with the .NET 10 SDK and Rust:
+- **Windows app:** one exe. WinUI 3 can only be built on Windows; there, with the .NET 10 SDK and Rust:
 
   ```sh
   cargo build --release
-  dotnet build windows -c Release -o app
-  copy target\release\cadual4kdockpd-patch.exe app\
+  dotnet publish windows -c Release -o app
   ```
 
-  `app\CADUAL4KDOCKPD-Patch-App.exe` is the window; the folder needs nothing installed (Windows 10 1809 or
-  later, 64-bit). Use `build`, not `publish`: publish leaves out the app's resource file and the window
-  then fails at start. `.github/workflows/windows-app.yml` at the top of the repository does the same on
-  GitHub and keeps the folder as the artifact of the run.
+  `app\CADUAL4KDOCKPD-Patch-App.exe` is the whole app: the window, the engine, .NET and the Windows App
+  SDK (about 90 MB; 64-bit Windows 10 1809 or later, nothing to install). At its first start it unpacks
+  itself into the user's temp folder (`%TEMP%\.net`), which takes a few seconds. The engine must be built
+  first, because the publish step packs it in. `.github/workflows/windows-app.yml` at the top of the
+  repository does the same on GitHub, starts the exe as a test and keeps it as the artifact of the run.
 - **Windows engine from a Mac:** `cargo build --release --target x86_64-pc-windows-gnu` (needs `mingw-w64`)
-  gives `cadual4kdockpd-patch.exe`, the command-line tool and engine. It can replace the one in the
-  folder above.
+  gives `cadual4kdockpd-patch.exe`, the command-line tool on its own.
 
 The engine looks for the image next to the program (or next to the `.app`), in the working folder and in
 Downloads: first `tps65982-image-1.38.6.bin`, a file holding only the power controller image, then
@@ -147,3 +146,7 @@ cargo build --release --target x86_64-pc-windows-gnu --features embedded-image  
 
 That program contains vendor firmware, so keep it internal. Each image is still checked against its
 SHA-256 before use. This repository and a plain build contain no firmware.
+
+The Windows exe gets its image differently, since it is built on GitHub where no firmware goes: attach
+the image file to the end of the finished exe (`cat CADUAL4KDOCKPD-Patch-App.exe image.bin > "CADUAL4KDOCKPD Patch.exe"`).
+The window names its own file to the engine (`DOCK_IMAGE_IN`), and the engine finds the image in it.

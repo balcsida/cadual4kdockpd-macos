@@ -24,6 +24,9 @@
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <!-- the Windows App SDK requires this for a single file: it puts the app's resource file inside -->
     <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- The Windows App SDK needs the exe unpacked to disk (it sets IncludeAllContentForSelfExtract),
+         so the .NET SDK's advice against that mode does not apply here. -->
+    <NoWarn>$(NoWarn);NETSDK1244</NoWarn>
     <DebugType>embedded</DebugType>
   </PropertyGroup>
   <ItemGroup>
