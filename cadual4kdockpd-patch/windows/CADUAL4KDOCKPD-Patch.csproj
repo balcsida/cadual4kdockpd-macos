@@ -22,6 +22,8 @@
     <SelfContained>true</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- leaves out the parts of .NET the app never calls -->
+    <PublishTrimmed>true</PublishTrimmed>
     <!-- the Windows App SDK requires this for a single file: it puts the app's resource file inside -->
     <EnableMsixTooling>true</EnableMsixTooling>
     <!-- Not named after the exe: the app would then fail to start whenever its file is renamed,

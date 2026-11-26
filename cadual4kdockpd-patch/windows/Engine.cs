@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using Microsoft.UI.Dispatching;
 
@@ -42,9 +43,16 @@ public sealed record StepProgress(string Label = "", double Fraction = 0);
 /// <summary>One line from the engine: exactly one of the three is set.</summary>
 public sealed record EngineEvent(DockState? State = null, StepProgress? Progress = null, string? Log = null);
 
+/// <summary>
+/// How the engine's lines are read. Generated at build time: the app is trimmed, so there is no
+/// reflection to work it out while running.
+/// </summary>
+[JsonSourceGenerationOptions(JsonSerializerDefaults.Web)]
+[JsonSerializable(typeof(EngineEvent))]
+internal sealed partial class EngineJson : JsonSerializerContext;
+
 public sealed class Engine
 {
-    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private Process? process;
 
     public DockState State { get; private set; } = new();
@@ -125,7 +133,7 @@ public sealed class Engine
         EngineEvent? engineEvent = null;
         try
         {
-            engineEvent = JsonSerializer.Deserialize<EngineEvent>(line, Json);
+            engineEvent = JsonSerializer.Deserialize(line, EngineJson.Default.EngineEvent);
         }
         catch (JsonException)
         {
