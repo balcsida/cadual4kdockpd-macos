@@ -1,74 +1,138 @@
 # DisplayLink Hidden Settings & Architecture (macOS + Linux + Windows)
 
-Undocumented preferences and internal architecture of DisplayLink drivers, reverse-engineered from macOS binary (v15.1.0), Linux driver (v6.2.0-30), and Windows driver (v12.2.1977.0). Key settings verified via Ghidra disassembly.
+Undocumented preferences and internal architecture of DisplayLink drivers, reverse-engineered from the macOS binary (v15.1.0, re-checked against v17.1.56), the Linux driver (v6.2.0-30) and the Windows driver (v12.2.1977.0). The macOS claims are checked against Ghidra disassembly.
 
-Tested on: **Apple M3 Max, macOS Tahoe 26.4, DisplayLink Manager 15.1.0, DisplayLink USB-C Dual-4K Dock (GenesysLogic GL352x hub, FW 0x9305), 2x HP E273 (1080p @ 60Hz)**
+Originally tested on: **Apple M3 Max, macOS Tahoe 26.4, DisplayLink Manager 15.1.0, DisplayLink USB-C Dual-4K Dock (GenesysLogic GL352x hub, FW 0x9305), 2x HP E273 (1080p @ 60Hz)**
+
+Re-checked in November 2026 against **DisplayLink Manager 17.1.56** (the current release, 5 November 2026) on macOS 27.2.1. That pass was static only: the arm64 slice was disassembled and compared with the 15.1.0 binary. The dock was not attached, so nothing in it was measured on a running display.
+
+## What the 17.1.56 re-check changed
+
+- `ForceScreenRefresh` is not a preference. Neither 15.1.0 nor 17.1.56 reads it from `NSUserDefaults`. The string is the name of an internal `NSNotification`, so `defaults write ... ForceScreenRefresh` does nothing. The earlier version of this document got this wrong.
+- The preference the frame-processing function really reads is `DisableGpuDiffing`. 17.1.56 adds `UseGpuDiffing`.
+- The GPU differ is only created for DL-6xxx devices driving a mode of 3840x2160 or more. On the 1080p monitors used here it never exists, so there is nothing to turn off.
+- Without a differ the driver sends the dirty rectangles ScreenCaptureKit reports, not the whole screen.
+- 17.1.56 no longer clamps the capture rate to 60 or 120 Hz.
+- `DisableRestartOnCrash` is gone in 17.1.56. `EnableExperimentalModes` is in neither binary.
+- New keys in 17.1.56: `UseGpuDiffing`, `VisualiseDirtyRects`, `DisableAccessibilityFilterSupport`, `DisableBrightnessContrast`, `DisableUpdater`, `AutoUpdateDebugCheckInterval`.
+- `Scramble` and `FirmwareTrace` are in the macOS binary after all. They are built inline in the code, where `strings` does not see them. `Scramble` is a transport setting, not HDCP, and `FirmwareTrace` is a log name, not a setting.
+- `WindowSize` is read in one place only, under `Nivolib/Network`, with a default of 4.
 
 ---
 
-## macOS: The Key Setting — `ForceScreenRefresh`
+## macOS: GPU diffing (`DisableGpuDiffing`, `UseGpuDiffing`) and why `ForceScreenRefresh` does nothing
 
-This is the single most impactful setting for perceived smoothness on DisplayLink displays:
+### `ForceScreenRefresh` is a notification name
+
+`ForceScreenRefresh` appears once in the binary, as a `CFString` constant. Every reference to it is an `NSNotificationCenter` call:
+
+- three functions post it with the display ID as an `NSNumber` (`postNotificationName:object:`), one of them right after `SourceModeChangeCompleted`
+- one function observes it (`addObserverForName:object:queue:usingBlock:`). It sets up a per-display frames watchdog during `BaseScreenRecorder` init, with a dispatch queue labelled `StreamFramesWatchdog ...`. The watchdog calls back into the recorder, presumably to queue a full-screen refresh (the callback was not traced)
+
+No `boolForKey:` or `objectForKey:` call takes it as an argument, in 15.1.0 or in 17.1.56. So this does nothing:
 
 ```bash
 defaults write com.displaylink.DisplayLinkUserAgent ForceScreenRefresh -bool true
 ```
 
-**To revert:**
+It is harmless if you set it earlier. To remove it:
 
 ```bash
 defaults delete com.displaylink.DisplayLinkUserAgent ForceScreenRefresh
 ```
 
-After changing, restart DisplayLink:
+### What the frame-processing function reads
+
+`BaseScreenRecorder` has a method (`FUN_1000efb60` in 17.1.56, `FUN_100050310` in 15.1.0) that turns a captured `IOSurface` into the list of rectangles to send. The render loop calls it for every frame with the previous surface, the new surface and the dirty rectangles the capture backend reported. In 17.1.56:
+
+1. If `gpuDifferCreationRequired` is set and there is no `GpuDiffer` yet: read `DisableGpuDiffing`. If it is false (the default), create a `GpuDiffer` for the surface size. Clear `gpuDifferCreationRequired` either way.
+2. If `gpuDiffingOverrideEnabled` is set (new in 17.x): read `UseGpuDiffing`. False drops the differ. True creates one if there is none.
+3. If a differ exists and returns rectangles, use them.
+4. Otherwise use the rectangles the backend passed in. If it passed none, use one rectangle covering the whole surface.
+
+`gpuDiffingOverrideEnabled` is set once, when the recorder is created, to whether the `UseGpuDiffing` key exists at all (`objectForKey:` is not nil). 15.1.0 has steps 1, 3 and 4 only.
+
+### When a differ is created at all
+
+`gpuDifferCreationRequired` is not a constant. The C++ side fills it into the recorder config (`FUN_1000b40ec` in 17.1.56, `FUN_100096280` in 15.1.0):
+
+```
+gpuDifferCreationRequired = (device family field == 0x6000) && (width * height >= 3840 * 2160)
+```
+
+`0x6000` is presumably the DL-6xxx family (the Dual-4K dock's DL-6950 is one). The logic is the same in both versions.
+
+| Setup | Differ by default | `DisableGpuDiffing=true` | `UseGpuDiffing=true` (17.x) | `UseGpuDiffing=false` (17.x) |
+|---|---|---|---|---|
+| DL-6xxx, mode of 3840x2160 or more | yes | no differ | differ | no differ |
+| Anything else (for example 1080p or 1440p on this dock) | no | no change | differ | no change |
+
+With no differ, the rectangles sent are ScreenCaptureKit's own dirty rectangles (`SCStreamFrameInfoDirtyRects`). The earlier claim that every frame becomes a full-screen update was wrong: a full rectangle is only used when the backend reports none.
+
+### What this means for the April 2026 result
+
+The "noticeably smoother" result recorded below for `ForceScreenRefresh=true` cannot have come from the key. On 2x 1080p there was no differ to disable either. The only thing each test really did was restart DisplayLink Manager.
+
+For a 4K monitor on a DL-6xxx dock the real switches are:
+
+```bash
+# 15.x and 17.x: do not create the GPU differ
+defaults write com.displaylink.DisplayLinkUserAgent DisableGpuDiffing -bool true
+
+# 17.x: force it off (false) or on (true), at any resolution
+defaults write com.displaylink.DisplayLinkUserAgent UseGpuDiffing -bool false
+```
+
+Restart DisplayLink afterwards, so the recorders are rebuilt:
 
 ```bash
 killall DisplayLinkUserAgent && sleep 2 && open "/Applications/DisplayLink Manager.app"
 ```
 
-### How It Works (Ghidra-verified)
-
-The `BaseScreenRecorder` class has a boolean field `nextFrameNeedsFullScreenUpdate`, initialized to `true`. When a new IOSurface frame arrives from screen capture, the frame processing function (`FUN_100050310`) follows this logic:
-
-1. A new frame arrives from `SCStream` (ScreenCaptureKit)
-2. Check if a `GpuDiffer` (Metal-based frame differ) exists
-3. **If no differ exists**, read `ForceScreenRefresh` via `NSUserDefaults.boolForKey:`
-4. If `ForceScreenRefresh` is **false** (default): create a `GpuDiffer` to detect changed screen regions. Only changed regions are sent to hardware, saving bandwidth but occasionally skipping frames the differ considers "unchanged"
-5. If `ForceScreenRefresh` is **true**: **skip differ creation entirely**. `nextFrameNeedsFullScreenUpdate` stays `true`, so every captured frame is treated as a full-screen update
-
-**This is why it feels smoother**: without GPU diffing, every captured frame is sent in its entirety to the DisplayLink hardware. There is zero chance of the differ incorrectly marking a frame as "unchanged" and skipping it. The tradeoff is more CPU/USB bandwidth usage — but on an M3 Max with 1080p displays, this overhead is negligible.
-
-> **Note:** `ForceScreenRefresh` is only read at startup via `registerDefaults:` and during frame processing. It is **not** KVO-observed at runtime, so changes require an app restart.
+Neither key has been tested on hardware, so whether the picture is better with or without the differ is open. 17.1.56 also has `VisualiseDirtyRects`, which creates a `DirtyRectVisualiser` for the recorder and should show what is being sent.
 
 ---
 
 ## macOS: Screen Recorder Architecture (Ghidra-verified)
 
-DisplayLink implements **three screen capture backends** plus a runtime switcher:
+DisplayLink implements **three screen capture backends** plus a runtime switcher. All four classes are still in 17.1.56:
 
 | Class | Backend API | Role |
 |---|---|---|
-| `SCKitScreenRecorder` | ScreenCaptureKit (`SCStream`, `SCContentFilter`) | Primary on macOS 12.3+ |
-| `CGDSScreenRecorder` | `CGDisplayStreamCreateWithDispatchQueue` | Legacy fallback |
-| `AVFoundationScreenRecorder` | `AVCaptureVideoDataOutput` | Oldest fallback |
-| `SwitchingScreenRecorder` | Wraps primary + fallback | Runtime backend switching |
+| `SCKitScreenRecorder` | ScreenCaptureKit (`SCStream`, `SCContentFilter`) | Default on macOS 15 and later |
+| `CGDSScreenRecorder` | `CGDisplayStreamCreateWithDispatchQueue` | Used on macOS 14, and as a fallback |
+| `AVFoundationScreenRecorder` | `AVCaptureVideoDataOutput` | Last fallback |
+| `SwitchingScreenRecorder` | Wraps primary + fallback | Only built when `DetectVideoOverlay` is on |
 
 `SwitchingScreenRecorder::init` takes a **primary** and **fallback** recorder. It maintains a dispatch queue, tracks the current active backend, and stores the last gamma ramp event and display data for seamless switching.
 
+### Backend selection (17.1.56, `FUN_1000c7260`)
+
+1. `ForceBackendAPI` (string): `ScreenCaptureKit`, `CGDS` or `AVFoundation` picks that backend. Any other value is ignored.
+2. New in 17.x: if an internal flag on the display source is false, use `CGDSScreenRecorder` when it is available. The flag starts as true and one event handler (`FUN_1000b8cf8`) clears it, so this looks like a fallback for when ScreenCaptureKit cannot be used. What triggers it was not worked out.
+3. Before macOS 15 (17.x still runs on macOS 14): `CGDSScreenRecorder`.
+4. `DetectVideoOverlay` off (the default): `SCKitScreenRecorder`.
+5. `DetectVideoOverlay` on: `SwitchingScreenRecorder` with `SCKitScreenRecorder` as primary. The fallback is the backend named by `FallbackBackendAPI`, else `CGDSScreenRecorder`, else `AVFoundationScreenRecorder`.
+
+"Available" for CGDS means `dlsym` finds `CGDisplayCreateImage`, `CGDisplayStreamCreateWithDispatchQueue`, `CGDisplayStreamStart`, `CGDisplayStreamStop` and `CGDisplayStreamUpdateGetRects` in CoreGraphics. All five still resolve on macOS 27.2.1.
+
+15.1.0 (`FUN_1000a5b54`) has the same order without step 2.
+
 ### Frame Rate Configuration (Ghidra-verified)
 
-The `SCStreamConfiguration.minimumFrameInterval` is set by `FUN_10004b5b4`:
+`SCStreamConfiguration.minimumFrameInterval` is set in `FUN_1000e9e3c` (17.1.56):
 
-1. Iterates `NSScreen.screens`, looking for the screen matching the DisplayLink display
-2. Calls `NSScreen.maximumFramesPerSecond` for that screen
-3. If the screen's max FPS ≥ 61: clamps to **60 Hz** (i.e., `CMTime(1, 60)`)
-4. If < 61: uses the screen's native rate
-5. Hard cap at **120 Hz** maximum (`CMTime(1, 120)`)
+1. `FUN_1000e9bac` walks `NSScreen.screens`, finds the screen whose display ID matches the recorder's and returns its `maximumFramesPerSecond` (0 if none matches)
+2. If that equals the refresh rate in the recorder config: `kCMTimeZero`, so no minimum interval
+3. Otherwise: `CMTime(1, refreshRate)`
 
-The `SCStreamConfiguration` is created with these fixed properties:
-- `pixelFormat`: `0x42475241` (ARGB/BGRA)
+15.1.0 (`FUN_10004b5b4`) clamped first: a refresh rate of 120 or more gave `CMTime(1, 120)`, 61 to 119 gave `CMTime(1, 60)`, and only 60 or less went through steps 2 and 3. 17.1.56 has no clamp.
+
+The other `SCStreamConfiguration` properties are fixed and unchanged from 15.1.0:
+- `pixelFormat`: `0x42475241` (BGRA)
 - `queueDepth`: 7
 - `showsCursor`: true
+- `width` / `height`: the stream size
 - `scalesToFit`: false
 - `capturesAudio`: false
 - `excludesCurrentProcessAudio`: true
@@ -77,47 +141,55 @@ The `SCStreamConfiguration` is created with these fixed properties:
 
 ## macOS: All Hidden `defaults write` Keys
 
-Complete list of NSUserDefaults keys found in the `DisplayLinkUserAgent` binary:
+`NSUserDefaults` keys the `DisplayLinkUserAgent` binary (17.1.56) reads, in the `com.displaylink.DisplayLinkUserAgent` domain. The list comes from the call sites of `boolForKey:`, `stringForKey:`, `integerForKey:` and `objectForKey:`, not from `strings`: Swift keeps strings of 15 bytes or fewer inline in the code, so `UseGpuDiffing`, `DisableUpdater` and `ShowMenuBarIcon` never show up in a string dump.
 
 ### Performance & Rendering
 
 | Key | Type | Verified | Description |
 |---|---|---|---|
-| `ForceScreenRefresh` | Bool | Ghidra ✓ | **Best perf tweak** — disables GPU frame diffing, forces every frame as full-screen update |
-| `ForceBackendAPI` | String | Ghidra ✓ | KVO-observed at runtime. Non-empty string = true. Likely controls which backend is primary in `SwitchingScreenRecorder` |
-| `FallbackBackendAPI` | String | strings | Fallback capture API if the primary fails |
-| `DisableGpuDiffing` | Bool | strings | May be an alias for `ForceScreenRefresh` or a separate code path |
-| `DetectVideoOverlay` | Bool | Ghidra ✓ | Auto-detect video call overlays — **known performance issue** when enabled (causes CPU spikes and lag, see [BetterDisplay #4905](https://github.com/waydabber/BetterDisplay/discussions/4905)). Read in `UserSettings::init` |
+| `DisableGpuDiffing` | Bool | Ghidra ✓ | Do not create the Metal `GpuDiffer`. Only matters where one would be created: DL-6xxx at 3840x2160 or more (see above) |
+| `UseGpuDiffing` | Bool | Ghidra ✓ (17.x) | When the key exists: true forces a `GpuDiffer` at any resolution, false removes it. Wins over `DisableGpuDiffing` |
+| `VisualiseDirtyRects` | Bool | Ghidra ✓ (17.x) | Read when a recorder is created. Creates a `DirtyRectVisualiser`. Untested |
+| `ForceBackendAPI` | String | Ghidra ✓ | `ScreenCaptureKit`, `CGDS` or `AVFoundation`. KVO-observed |
+| `FallbackBackendAPI` | String | Ghidra ✓ | Same values. Only read when `DetectVideoOverlay` is on |
+| `DetectVideoOverlay` | Bool | Ghidra ✓ | Auto-detect video call overlays. Has a `UserSettings` setter, so it is a Settings-tab switch. Wraps capture in `SwitchingScreenRecorder`. **Known performance issue** when enabled (CPU spikes and lag, see [BetterDisplay #4905](https://github.com/waydabber/BetterDisplay/discussions/4905)) |
+| `SilentRestartsThreshold` | Integer | Ghidra ✓ | Read in `CaptureStreamOutput` init. 6 when unset or 0 |
+| `ForceScreenRefresh` | n/a | Ghidra ✓ | **Not a preference.** An `NSNotification` name, never read from defaults |
 
 ### Display Modes
 
 | Key | Type | Verified | Description |
 |---|---|---|---|
-| `EnableExperimentalModes` | Bool | strings | Enables experimental display modes. [Officially documented for HiDPI](https://support.displaylink.com/knowledgebase/articles/1993915-displaylink-manager-app-experimental-hidpi-modes) |
-| `EnableLargeHiDPIModes` | Bool | Ghidra ✓ | Enables scaled 3008x, 2560x and more modes. Read in `UserSettings::init` |
+| `EnableLargeHiDPIModes` | Bool | Ghidra ✓ | The "Additional HiDPI modes" switch in the Settings tab: extra 3008x1692 and 2560x1440 HiDPI modes. [On by default since 15.0](https://support.displaylink.com/knowledgebase/articles/1993915-displaylink-manager-app-experimental-hidpi-modes) |
+| `EnableExperimentalModes` | n/a | not found | The string is in neither 15.1.0 nor 17.1.56, and the knowledge base article no longer gives a `defaults` command. Setting it does nothing |
 
 ### Color Processing
 
 | Key | Type | Verified | Description |
 |---|---|---|---|
-| `DisableFluxGammaSupport` | Bool | strings | Skips f.lux color processing integration |
+| `DisableFluxGammaSupport` | Bool | Ghidra ✓ | Skips f.lux color processing integration. Read in two places |
 | `DisableNightShiftSupport` | Bool | Ghidra ✓ | When true, skips `dlopen` of `CoreBrightness.framework` entirely, preventing Night Shift hooks. The `NightShiftSingleton` is never initialized |
+| `DisableAccessibilityFilterSupport` | Bool | Ghidra ✓ (17.x) | Clears the accessibility-filter flag in the recorder config. Presumably stops the macOS colour filters being applied to DisplayLink displays |
+| `DisableBrightnessContrast` | Bool | Ghidra ✓ (17.x) | Read next to the `brightness_and_contrast_monitor` string. Presumably turns off the brightness and contrast controls |
 
 ### Application Behavior
 
 | Key | Type | Verified | Description |
 |---|---|---|---|
-| `ShowMenuBarIcon` | Bool | Ghidra ✓ | Hide/show the menu bar icon. Read directly from `UserSettings.showMenuBarIcon` field in `AppDelegate` init |
-| `AppAutostart` | Bool | Ghidra ✓ | Auto-launch on login. KVO-observed at runtime alongside `ForceBackendAPI` |
-| `DisableRestartOnCrash` | Bool | Ghidra ✓ | When false (default), registers an `SMAppService` agent plist for automatic crash recovery restart |
+| `ShowMenuBarIcon` | Bool | Ghidra ✓ | Hide/show the menu bar icon. Read in `UserSettings::init` |
+| `SleepOnClamshell` | Bool | Ghidra ✓ | Has a `UserSettings` setter, so presumably a Settings-tab switch. Also in 15.1.0 |
+| `AppAutostart` | Bool | Ghidra ✓ | 17.1.56 only writes it, from the autostart notification action. 15.1.0 also read it |
+| `DisableUpdater` | Bool | Ghidra ✓ (17.x) | Read in the new update code. Presumably turns off the periodic update check added in 17.0 |
+| `AutoUpdateDebugCheckInterval` | Bool | Ghidra ✓ (17.x) | Debug switch in the same code |
+| `DisableRestartOnCrash` | n/a | removed | 15.1.0 read it before registering an `SMAppService` agent for restart on crash. 17.1.56 has neither the string nor the read. `RestartOnCrashService` still exists |
+
+The app also keeps its own state in the same domain: `EnabledDisplays`, `DisplaysDisabledBySystem`, `LastAvailableUpdate`, `SUSkippedVersion`, `ScreenRecordingPermissionPreviouslyGranted`, `FirstSetupCompleted` and a few more.
 
 ### KVO-Observed Keys (Runtime Changes Without Restart)
 
-Only **two** keys are watched via `observeValueForKeyPath:`:
-- `AppAutostart` (bool change triggers Combine `Published` update)
-- `ForceBackendAPI` (string change → converted to bool: non-empty = true)
+`UserSettings::init` in 17.1.56 registers one `observeValueForKeyPath:` observer, for `ForceBackendAPI`. 15.1.0 registered two, `AppAutostart` and `ForceBackendAPI`.
 
-All other settings require an app restart to take effect.
+`UseGpuDiffing` is read again on every frame, but only if the key existed when the recorder was created. Everything else is read once, so restart the app after changing it.
 
 ---
 
@@ -138,7 +210,7 @@ These keys were found in both the Linux `DisplayLinkManager` binary AND the macO
 | Key | XML Path (under `DisplayLink/`) | Description | Potential impact |
 |---|---|---|---|
 | `ExtraModes` | `DisplayLinkManager/Configurations/<monitor>/Viewer/NivoSettings/ExtraModes` | Additional display modes beyond EDID | Could unlock more resolutions |
-| `WindowSize` | `Core/WindowSize` | USB transfer window size | Larger = more throughput, more latency |
+| `WindowSize` | `Nivolib/Network/WindowSize` (the only read in 17.1.56; `Core/WindowSize` is not read) | Window size of the Nivo transport, integer, default 4 | Larger = more throughput, more latency |
 | `BandwidthAllocator` | `Core/BandwidthAllocator` | How USB bandwidth is split across displays | Could improve multi-display performance |
 | `SessionStartDelay` | Connection auth path | Delay before HDCP session start | Lower = faster display activation |
 | `LcTimeout` | HDCP locality check | Timeout for HDCP locality check | Faster display connection |
@@ -158,13 +230,14 @@ These are per-monitor settings under each `Configurations/<monitor-serial>/Viewe
 | `Rotation` | `0` | 0, 90, 180, 270 |
 | `ContentHint` | `Auto` | `Game`, `Cinema`, `Photo`, `Graphics` (Linux-only?) |
 | `AdjustedDisplayMode/AdjustedMode` | `0x0x0@0` | `<width>x<height>x<depth>@<freq>` |
+| `AdjustedDisplayMode/OriginalMode` | `0x0x0@0` | `<width>x<height>x<depth>@<freq>` |
 | `AntiAutoAdjustingBorder/Colour` | `0` | Border color |
 | `AntiAutoAdjustingBorder/Thickness_H` | `0` | Horizontal border thickness |
 | `AntiAutoAdjustingBorder/Thickness_V` | `0` | Vertical border thickness |
 
 ### Logger configuration (can be added to `.dlua.xml`)
 
-Based on the Linux `DLSupportTool.sh --debug` implementation, this XML structure enables debug logging. **Untested on macOS** — the encrypted `.log` files suggest macOS may encrypt output, but this config might enable plaintext logging:
+Based on the Linux `DLSupportTool.sh --debug` implementation, this XML structure enables debug logging on Linux. **On macOS it is ignored** (tested on 15.1.0 in April 2026, see Experiments). The log files are still encrypted in 17.1.56:
 
 ```xml
 <!-- Add under HKEY_LOCAL_MACHINE/Software/DisplayLink/ -->
@@ -202,21 +275,42 @@ Based on the Linux `DLSupportTool.sh --debug` implementation, this XML structure
 </node>
 ```
 
-### Linux-only keys (NOT in macOS binary)
+### Keys from the Linux driver, checked against the macOS binary
 
-| Key | Description | Why it matters |
+| Key | Description | In the macOS binary (17.1.56)? |
 |---|---|---|
-| `RenderRate` | Controls render rate in the update engine | Could control FPS at the encoder level |
-| `showFPS` | Displays FPS counter | Invaluable for debugging performance |
-| `FirmwareTrace` | Firmware-level trace logging | Debug dock firmware issues |
-| `Scramble` | HDCP scrambling control | |
-| `Powerups` | Power-on sequence control | |
+| `RenderRate` | Controls render rate in the update engine | No |
+| `showFPS` | Displays FPS counter | No |
+| `Powerups` | Power-on sequence control | No |
+| `Scramble` | Scrambling of the Nivo transport (not HDCP) | Yes, a real setting (see below) |
+| `FirmwareTrace` | Firmware-level trace logging | Yes, but only as a log name (see below) |
+
+"No" means neither a string nor inline immediates for it in the arm64 slice. `Scramble` and `FirmwareTrace` were listed as Linux-only before, because `strings` cannot see inline strings.
+
+### `Scramble` and `WindowSize` (Nivo transport)
+
+`FUN_1002837cc` sets up the Nivo transport. Nivo is DisplayLink's device protocol (the monitors here show up as `NivoViewer` in `.dlua.xml`). The function opens a `Nivolib` > `Network` node in the settings hive and reads two values:
+
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `WindowSize` | Integer | 4 | Transport window size. A line is logged when it differs from the current value |
+| `Scramble` | Bool | true | Scramble every outgoing data block |
+
+With `Scramble` on, the send path (`FUN_1002a2c48`) passes each outgoing block and the low byte of its sequence number to a scrambler object before queuing it. With it off the blocks go out as they are, and the driver logs a level 1 message at startup. Nothing here touches HDCP, so the earlier "HDCP scrambling control" description was a guess.
+
+The parent path of the `Nivolib` node was not resolved, and nothing here was tested. Turning `Scramble` off is not a performance setting: if the device still expects scrambled blocks, the likely result is no picture.
+
+### `FirmwareTrace` (log name)
+
+On macOS `FirmwareTrace` is not a setting. The string is built in the constructor of the device object (`FUN_10018a604`) and handed to it as a name, and it is the only place the string occurs. It matches `FirmwareTrace.log` in the Logs folder: the dock's firmware trace output, encrypted like the other logs and rotated to `FirmwareTrace.old.log` at about 10 MB. 17.1.56 writes it without any setting being turned on. No switch for it was found.
+
+The same constructor reads two settings that were not in this document before: `ForceHDMICompliance` (bool, default false) and `DualNivo` (bool, default true). Neither was looked into further.
 
 ---
 
 ## macOS: Support Tool Utilities
 
-The **DisplayLink Support Tool** (`/Applications/DisplayLink Support Tool.app`) bundles several useful utilities:
+The **DisplayLink Support Tool** (`/Applications/DisplayLink Support Tool.app`) is a separate download, not part of DisplayLink Manager. It bundles several useful utilities. This section describes Support Tool 7.0.0 and was not re-checked for 17.1.56.
 
 ### `DisplayDetails` binary
 
@@ -403,6 +497,8 @@ The `ImportSettings.reg` contains product branding for 60+ devices from Kensingt
 
 All use the "ELLA" container format (Synaptics internal). DL-7xxx/6xxx/5xxx/3xxx/41xx devices are automatically upgraded upon connection on Linux.
 
+Sizes in DisplayLink Manager 17.1.56 for macOS: ella 608 KB, navarro 1.7 MB, ridge 879 KB, firefly 357 KB. All four still start with the `ELLA` magic.
+
 ### USB Hub Firmware (GenesysLogic GL352x)
 
 The dock's USB hub uses a **GenesysLogic GL352x** chip (VID `0x05E3`, PID `0x0610`). A separate Windows-only firmware updater (`CADUAL4KDOCKPD_9392.exe` / "USB3.0 Hub Update Tool v3.001") can update the hub firmware from version 9311 → 9392, fixing random disconnection issues. Uses `GL_SS_HUB_ISP.exe` internally, flashing `Hub_1_9392_L1.ROM` and `Hub_1_9392_L2.ROM`.
@@ -420,22 +516,25 @@ SCKitScreenRecorder
   └─ SCStream (ScreenCaptureKit)
        ├─ SCContentFilter (initWithDisplay:excludingApplications:exceptingWindows:)
        ├─ SCStreamConfiguration
-       │    ├─ minimumFrameInterval: CMTime(1, displayFPS) — capped at 120Hz
+       │    ├─ minimumFrameInterval: kCMTimeZero, or CMTime(1, refreshRate) if the screen's max FPS differs
        │    ├─ queueDepth: 7
        │    ├─ pixelFormat: BGRA
        │    └─ showsCursor: true
        └─ CaptureStreamOutput (receives IOSurface frames)
-            └─ silentRestartsThreshold: read from NSUserDefaults integerForKey (default: 6)
+            ├─ reads SCStreamFrameInfoStatus and SCStreamFrameInfoDirtyRects from each frame
+            ├─ yields (surface, dirtyRects) into frameStream
+            └─ silentRestartsThreshold: NSUserDefaults integerForKey "SilentRestartsThreshold" (default: 6)
 ```
 
 ### Processing Layer
 
 ```
 BaseScreenRecorder (processes captured frames)
-  ├─ nextFrameNeedsFullScreenUpdate: bool (init: true)
-  ├─ gpuDifferCreationRequired: bool (init: false)
+  ├─ nextFrameNeedsFullScreenUpdate: bool (set to true in init)
+  ├─ gpuDiffingOverrideEnabled: bool (17.x: the UseGpuDiffing key exists)
+  ├─ gpuDifferCreationRequired: bool (from the recorder config: DL-6xxx and >= 3840x2160)
   ├─ differ: GpuDiffer? (Metal-based frame differ)
-  ├─ framesWatchdog: monitors frame delivery
+  ├─ framesWatchdog: monitors frame delivery, observes the ForceScreenRefresh notification
   ├─ healingFramesWatchdog: periodically forces full frames
   ├─ frameTransformer: applies transformations
   ├─ gammaApplier: color correction
@@ -443,22 +542,23 @@ BaseScreenRecorder (processes captured frames)
   └─ latestSurface: most recent captured IOSurface
 ```
 
-### Frame Processing Flow (ForceScreenRefresh path)
+The render loop (`FUN_1000f01a4` in 17.1.56) takes `(surface, dirtyRects)` pairs off the stream. For each one it calls the frame-processing method with `latestSurface`, the new surface and the rectangles, then sends the surface with the rectangles that come back.
+
+### Frame Processing Flow (17.1.56)
 
 ```
-New IOSurface arrives
+New (surface, dirtyRects) from the backend
   │
-  ├─ differ exists? ──yes──▶ Use GpuDiffer to find changed rects
-  │                           └─ Send only changed regions
+  ├─ gpuDifferCreationRequired?   (DL-6xxx and >= 3840x2160 only)
+  │     └─ no differ yet and DisableGpuDiffing=false ──▶ create GpuDiffer (FUN_1000e3930)
   │
-  └─ differ is nil?
-       │
-       ├─ ForceScreenRefresh=false ──▶ Create GpuDiffer (FUN_100047f84)
-       │                                └─ Future frames use diff-based updates
-       │
-       └─ ForceScreenRefresh=true ──▶ Skip differ creation
-                                       └─ Every frame = full screen update
-                                            (nextFrameNeedsFullScreenUpdate stays true)
+  ├─ gpuDiffingOverrideEnabled?   (17.x: the UseGpuDiffing key exists)
+  │     ├─ UseGpuDiffing=false ──▶ drop the differ
+  │     └─ UseGpuDiffing=true  ──▶ create GpuDiffer if missing
+  │
+  ├─ differ exists and returns rects ──▶ send those
+  ├─ backend passed dirtyRects       ──▶ send those
+  └─ otherwise                       ──▶ send one full-surface rect
 ```
 
 ### Log & Config Locations (macOS)
@@ -466,37 +566,34 @@ New IOSurface arrives
 | Path | Description |
 |---|---|
 | `~/Library/Group Containers/73YQY62QM3.com.displaylink.DisplayLinkShared/Library/Application Support/Logs/` | Logs, EDID files, config XML |
-| `*.log` | Application logs (encrypted/obfuscated) |
+| `DisplayLinkUserAgent.log`, `DisplayLink Manager.log`, `FirmwareTrace.log` (each with an `.old.log`) | Application and firmware logs (encrypted/obfuscated, also in 17.1.56) |
 | `.dlua.xml` | User agent config (logging level, display configurations) |
 | `*.edid` | Raw EDID data per monitor (256 bytes each) |
 | `dlm_message_server_in#1` / `dlm_message_server_out#1` | Named pipes for IPC |
 
 ---
 
-## Experiments Completed (April 2026)
+## Experiments Completed (April 2026, 15.1.0)
 
 | Experiment | Result | Details |
 |---|---|---|
-| `ForceScreenRefresh=true` | **SUCCESS** | Disables GPU frame diffing. Noticeably smoother. Confirmed via Ghidra: skips `GpuDiffer` creation, every frame sent as full-screen update. **Recommended setting.** |
+| `ForceScreenRefresh=true` | **Not a valid test** | Felt noticeably smoother at the time. The key is never read (see above), so the change came from somewhere else, most likely the restart. |
 | `ForceBackendAPI=ScreenCaptureKit` | **No effect** | v15.1.0 already uses ScreenCaptureKit natively. Stack trace sampling confirmed both modes use `SCStream` with zero `CGDisplayStream` calls. |
 | Debug logging via `.dlua.xml` Logger XML | **Failed** | macOS binary ignores Logger XML config entirely. Logs remain encrypted. The Linux `DLSupportTool.sh --debug` XML structure is not read by the macOS driver. |
-| `ContentHint=Graphics` in `.dlua.xml` | **No perceptible effect** | XML was accepted and survived restart, but no visible difference — likely because `ForceScreenRefresh` already sends full uncompressed frames, making encoder hints irrelevant. |
+| `ContentHint=Graphics` in `.dlua.xml` | **No perceptible effect** | XML was accepted and survived restart, but no visible difference. |
 | `DisableFluxGammaSupport=true` | **Applied** | Removes f.lux hook overhead. Minor/unmeasurable impact. |
 | `DisableNightShiftSupport=true` | **Applied** | Skips CoreBrightness.framework loading. Minor/unmeasurable impact. |
-| XML tunables without `ForceScreenRefresh` | **Made things worse** | Tested `WindowSize=65536`, `BandwidthAllocator/WindowSize=65536`, `ContentHint=Graphics`, `ExtraModes=1`, `MaskProtocolErrors=1` all together with `ForceScreenRefresh=false`. Result: "brutal latency." These XML tunables cannot substitute for `ForceScreenRefresh` and may actually degrade performance when the GPU differ is active. |
+| XML tunables | **Made things worse** | Tested `WindowSize=65536`, `BandwidthAllocator/WindowSize=65536`, `ContentHint=Graphics`, `ExtraModes=1`, `MaskProtocolErrors=1` all together. Result: "brutal latency." `ForceScreenRefresh` was off for this run, which makes no difference, so the tunables themselves caused it. Which one is unclear: 17.1.56 only reads `WindowSize` under `Nivolib/Network`. |
+
+Nothing has been tested on hardware with 17.1.56 yet.
 
 ## Conclusion
 
-For macOS on Apple Silicon, **the single most impactful setting is:**
+There is no hidden preference that makes DisplayLink smoother on this setup (DL-6950 dock, 2x 1080p). `ForceScreenRefresh` is not read, and the GPU differ that `DisableGpuDiffing` controls is only created at 3840x2160 and above.
 
-```bash
-defaults write com.displaylink.DisplayLinkUserAgent ForceScreenRefresh -bool true
-killall DisplayLinkUserAgent && sleep 2 && open "/Applications/DisplayLink Manager.app"
-```
+For a 4K display on a DL-6xxx dock, `DisableGpuDiffing` (15.x and 17.x) and `UseGpuDiffing` (17.x) do change the pipeline: they switch between the Metal differ and ScreenCaptureKit's dirty rectangles. Whether that looks better is untested.
 
-This disables the Metal GPU frame differ, forcing every captured frame to be sent as a full-screen update. The ~3-5% extra CPU usage is negligible on M-series chips and eliminates perceived choppiness from skipped/partially-updated frames.
-
-The XML-based tunables (`WindowSize`, `BandwidthAllocator`, `ContentHint`, `ExtraModes`, `MaskProtocolErrors`) in `.dlua.xml` were tested but provide no benefit and can make latency worse. **Do not use them as alternatives to `ForceScreenRefresh`.**
+The XML-based tunables (`WindowSize`, `BandwidthAllocator`, `ContentHint`, `ExtraModes`, `MaskProtocolErrors`) in `.dlua.xml` were tested in April 2026 and made latency worse. **Do not use them.**
 
 ---
 
@@ -506,15 +603,13 @@ Analysis of [github.com/DisplayLink](https://github.com/DisplayLink) repositorie
 
 ### EVDI — Frame Pacing Bug ([#512](https://github.com/DisplayLink/evdi/issues/512), [#562](https://github.com/DisplayLink/evdi/pull/562))
 
-The EVDI issue tracker contains the **root cause explanation** for the same choppiness problem that `ForceScreenRefresh` works around on macOS.
-
 [Issue #512](https://github.com/DisplayLink/evdi/issues/512) describes how the EVDI vblank timing is fundamentally broken:
 
 > *"evdi fires vblank immediately after the user-space driver called `DRM_EVDI_GRABPIX`... This in turn will generally result in the drm master immediately starting to render a new frame, thinking the display is fast enough to want it, which in turn leads to new update ready events... The result is wasted CPU/GPU on useless frames that get thrown away anyway."*
 
-[PR #562](https://github.com/DisplayLink/evdi/pull/562) fixes this on Linux by implementing **proper hrtimer-based vblank** at the display's actual refresh rate — the same pattern used by the `vkms` virtual display driver. This eliminates tearing and properly paces frames.
+[PR #562](https://github.com/DisplayLink/evdi/pull/562) proposes a fix on Linux: **proper hrtimer-based vblank** at the display's actual refresh rate, the same pattern used by the `vkms` virtual display driver. As of November 2026 the issue is still open and the PR is not merged (latest EVDI release: v1.15.1, September 2026).
 
-**On macOS**, the analogous problem manifests differently: the `GpuDiffer` (Metal-based frame differ) sometimes incorrectly determines frames are "unchanged" and skips them, or the frame delivery pipeline has poor timing causing frames to arrive in bursts rather than evenly paced. `ForceScreenRefresh=true` brute-forces past this by disabling the differ entirely and sending every frame as a full-screen update.
+This is a Linux problem. The earlier version of this document tied it to `ForceScreenRefresh` and the `GpuDiffer` on macOS. Nothing in the macOS binary supports that link.
 
 ### DL-7450 SDK — Programmable Docks
 
@@ -534,38 +629,44 @@ The EVDI kernel module has been patched to compile on **Asahi Linux (Fedora on A
 
 ### Other Notable Issues
 
-- [#552](https://github.com/DisplayLink/evdi/issues/552) — Low refresh rate (below 20 FPS visually despite 60 Hz reported) after EVDI update. Same symptom class as the macOS choppiness.
-- [#522](https://github.com/DisplayLink/evdi/issues/522) — DisplayLinkManager consuming 14% CPU with no monitors connected. Related to the update loop spinning without proper throttling.
-- [#548](https://github.com/DisplayLink/evdi/pull/548) — CPU cache flush fix for cache coherency. Performance-relevant for the frame buffer pipeline.
+- [#552](https://github.com/DisplayLink/evdi/issues/552) — Low refresh rate (below 20 FPS visually despite 60 Hz reported) after EVDI update. Closed in February 2026.
+- [#522](https://github.com/DisplayLink/evdi/issues/522) — DisplayLinkManager consuming 14% CPU with no monitors connected. Related to the update loop spinning without proper throttling. Still open.
+- [#548](https://github.com/DisplayLink/evdi/pull/548) — CPU cache flush fix for cache coherency. Closed without being merged in February 2026.
 
 ---
 
 ## Methodology
 
-- **macOS `defaults write` keys**: Extracted from binary strings, correlated with `NSUserDefaults` access patterns (`boolForKey:`, `stringForKey:`, `integerForKey:`)
-- **ScreenCaptureKit verification**: `sample` (call stack sampling) confirmed both default and forced modes use `SCStream`, zero `CGDisplayStream` calls
-- **Ghidra disassembly** of `DisplayLinkUserAgent` (arm64 Mach-O, 13 MB, stripped):
-  - `UserSettings::init` (`0x10002a410`): reads all defaults into Swift `@Published` properties
-  - `UserSettings::observeValueForKeyPath` (`0x10002b538`): KVO handler for `AppAutostart` and `ForceBackendAPI`
-  - `FUN_100050310`: frame processing function that reads `ForceScreenRefresh` and conditionally creates `GpuDiffer`
-  - `FUN_10004b66c`: `SCStreamConfiguration` setup with frame interval, pixel format, queue depth
-  - `FUN_10004b5b4`: frame interval calculation (CMTime from display FPS, clamped 60-120Hz)
-  - `FUN_1000480f0`: `NightShiftSingleton` init that reads `DisableNightShiftSupport` and conditionally loads CoreBrightness
-  - `FUN_10000adec`: `AppDelegate` init that reads `DisableRestartOnCrash` and registers `SMAppService`
+- **macOS `defaults write` keys**: every call site of `boolForKey:`, `stringForKey:`, `integerForKey:`, `objectForKey:`, `dictionaryForKey:`, `arrayForKey:` and `setBool:forKey:` in the arm64 slice, with the key argument resolved from the code before the call. That covers `CFString` constants, Swift literals (`adrp`/`add`, then `sub #0x20`) and Swift small strings built from immediates. String dumps alone miss the last kind
+- **15.1.0 vs 17.1.56**: the same scripts run on both binaries (Ghidra headless), so each claim above is either the same in both or marked with the version
+- **ScreenCaptureKit verification** (15.1.0 only): `sample` (call stack sampling) confirmed both default and forced modes use `SCStream`, zero `CGDisplayStream` calls
+- **Ghidra disassembly** of `DisplayLinkUserAgent` 17.1.56 (arm64 slice, 6.8 MB, stripped, image base `0x100000000`):
+  - `FUN_10003f5bc`: `UserSettings::init`, reads the Settings-tab keys and registers the `ForceBackendAPI` observer
+  - `FUN_1000efb60`: frame processing method, reads `DisableGpuDiffing` and `UseGpuDiffing`, creates the `GpuDiffer` through `FUN_1000e3930`
+  - `FUN_1000edc10`: `BaseScreenRecorder` init body, reads `VisualiseDirtyRects`, sets `gpuDiffingOverrideEnabled` and `gpuDifferCreationRequired`
+  - `FUN_1000f01a4`: render loop that calls the frame processing method
+  - `FUN_1000b40ec`: builds the recorder config, including `gpuDifferCreationRequired` (the 0x6000 and 3840x2160 test at `0x1000b4b04`)
+  - `FUN_1000c7260`: recorder factory (`ForceBackendAPI`, `FallbackBackendAPI`, `DetectVideoOverlay`). `FUN_1000c71a4` maps the backend name to a class, `FUN_1000dbaf0` probes for the CGDisplayStream symbols
+  - `FUN_1000e9e3c`: `SCStreamConfiguration` setup. `FUN_1000e9bac`: the `NSScreen.maximumFramesPerSecond` lookup
+  - `FUN_1000ea50c`: `CaptureStreamOutput` frame handler (dirty rects). `FUN_1000e8728`: its init, reads `SilentRestartsThreshold`
+  - `FUN_1000cdbbc`: frames watchdog, observes `ForceScreenRefresh`. `FUN_1000b72a8`, `FUN_1000c3f20`, `FUN_1000c951c`: the three places that post it
+  - `FUN_1002837cc`: Nivo transport setup, reads `WindowSize` and `Scramble`. `FUN_1002a2c48`: the send path that scrambles. `FUN_10018a604`: device object constructor (`FirmwareTrace`, `ForceHDMICompliance`, `DualNivo`)
+  - `FUN_1000e3a9c`: reads `DisableNightShiftSupport`. `FUN_1000ba8d8`: reads `DisableAccessibilityFilterSupport`. `FUN_1000cc33c`: reads `DisableBrightnessContrast`
+- **Same functions in 15.1.0** (arm64, 6.5 MB): `UserSettings::init` `0x10002a410`, frame processing `FUN_100050310` (the key string at `0x100413c60` is `DisableGpuDiffing`), recorder config `FUN_100096280`, recorder factory `FUN_1000a5b54`, frame interval `FUN_10004b5b4`, `SCStreamConfiguration` setup `FUN_10004b66c`, `ForceScreenRefresh` observer `FUN_1000ac5b4`, `NightShiftSingleton` init `FUN_1000480f0`, `AppDelegate` init `FUN_10000adec` (reads `DisableRestartOnCrash`)
 - **Linux driver**: Extracted from Makeself archive (`tail -n +714 | gzip -cd | tar xf -`)
 - **EVDI parameters**: From kernel module source code (`evdi_params.c`, `evdi_sysfs.c`)
 - **EVDI library API**: From `evdi_lib.h` — `evdi_connect2()` bandwidth parameters
 - **EVDI GitHub issues**: Frame pacing bug ([#512](https://github.com/DisplayLink/evdi/issues/512)), vblank fix ([#562](https://github.com/DisplayLink/evdi/pull/562)), Asahi Linux support ([#559](https://github.com/DisplayLink/evdi/pull/559))
-- **Cross-platform XML keys**: Found by cross-referencing strings in Linux `DisplayLinkManager` (aarch64) and macOS `DisplayLinkUserAgent` (arm64)
-- **ContentHint values**: From Linux `DisplayLinkManager` binary strings (confirmed macOS-absent via Ghidra)
+- **Cross-platform XML keys**: Found by cross-referencing strings in Linux `DisplayLinkManager` (aarch64) and macOS `DisplayLinkUserAgent` (arm64). All of them are still in 17.1.56
+- **ContentHint values**: From Linux `DisplayLinkManager` binary strings. No `Game`/`Cinema`/`Photo`/`Graphics` hint values were found in the macOS binary (strings or inline immediates), only EDID content-type labels
 - **Windows driver**: Extracted from PE32 installer → 7z SFX → driver packages. Registry settings from embedded `ImportSettings.reg` and `dlcdcncm.inf`
 - **DL-7450 SDK**: From [github.com/DisplayLink/dl-7450](https://github.com/DisplayLink/dl-7450) — MicroPython dock programming interface
 
 ## Notes
 
-- Hidden preferences may change or disappear with any DisplayLink update
+- Hidden preferences may change or disappear with any DisplayLink update. `DisableRestartOnCrash` went between 15.1.0 and 17.1.56
 - DisplayLink on macOS works via screen capture (not native GPU output) — a fundamental Apple limitation
 - The Linux driver uses EVDI (virtual display interface in kernel) + DRM, which is architecturally different from macOS
 - Windows uses native GPU driver integration (WDDM), not screen capture — fundamentally different from both macOS and Linux
-- The frame pacing issue ([EVDI #512](https://github.com/DisplayLink/evdi/issues/512)) is the root cause of choppiness across platforms; `ForceScreenRefresh` on macOS and hrtimer vblank ([EVDI #562](https://github.com/DisplayLink/evdi/pull/562)) on Linux are different solutions to the same underlying problem
-- Tested April 2026. YMMV on different versions
+- The Linux and Windows sections describe 6.2.0-30 and 12.2.1977.0 and were not re-checked. EVDI upstream is at v1.15.1
+- Tested on hardware in April 2026 (15.1.0). Re-checked by disassembly only in November 2026 (17.1.56). YMMV on different versions
