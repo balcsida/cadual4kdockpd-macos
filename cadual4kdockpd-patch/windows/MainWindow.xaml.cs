@@ -1,0 +1,238 @@
+using System;
+using System.Runtime.InteropServices;
+using Microsoft.UI;
+using Microsoft.UI.Text;
+using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
+using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Microsoft.UI.Xaml.Shapes;
+using Windows.Graphics;
+using Windows.UI;
+
+namespace DockPatch;
+
+/// <summary>Shows the engine's state. The layout and all fixed text are in MainWindow.xaml.</summary>
+public sealed partial class MainWindow : Window
+{
+    private static readonly string[] StepTitles = ["Connect the dock", "Identify the dock", "Apply the fix", "Restart the dock", "Test it"];
+
+    // Fixed colours that read on the light and on the dark theme; white on the first two has a contrast of at least 4.5:1.
+    private static readonly Color Accent = ColorHelper.FromArgb(0xff, 0x1f, 0x6f, 0xeb);
+    private static readonly Color Done = ColorHelper.FromArgb(0xff, 0x2e, 0x7d, 0x32);
+    private static readonly Color Upcoming = ColorHelper.FromArgb(0xff, 0x80, 0x80, 0x80);
+
+    private readonly Engine engine = new();
+    private int drawnStep;
+    private bool closeRefused;
+    private bool restoreAsked;
+    private bool moreOpened;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        var scale = GetDpiForWindow(WinRT.Interop.WindowNative.GetWindowHandle(this)) / 96.0;
+        AppWindow.Resize(new SizeInt32((int)(780 * scale), (int)(860 * scale)));
+        // closing the window would leave the user without the result of a write
+        AppWindow.Closing += (_, e) =>
+        {
+            if (engine.Writing)
+            {
+                e.Cancel = true;
+                closeRefused = true;
+                Render();
+            }
+        };
+        engine.Changed += Render;
+        Render();
+        engine.Start(DispatcherQueue);
+    }
+
+    [DllImport("user32.dll")]
+    private static extern uint GetDpiForWindow(IntPtr window);
+
+    private void Render()
+    {
+        var s = engine.State;
+        var idle = s.Running is null;
+        var step = s.StepNumber;
+
+        StoppedBar.IsOpen = engine.Stopped is not null;
+        StoppedBar.Message = engine.Stopped ?? "";
+        CloseRefusedBar.IsOpen = closeRefused && engine.Writing;
+
+        Summary2.Text = s.Identified?.Text ?? "";
+        Summary3.Text = s.AlreadyPatched ? "Not needed: the fix is already in this dock." : "Written and verified.";
+        Summary4.Text = s.AlreadyPatched ? "Not needed." : "Restarted.";
+        Grid[] badges = [Badge1, Badge2, Badge3, Badge4, Badge5];
+        TextBlock[] titles = [Title1, Title2, Title3, Title4, Title5];
+        TextBlock?[] summaries = [Summary1, Summary2, Summary3, Summary4, null];
+        StackPanel[] bodies = [Body1, Body2, Body3, Body4, Body5];
+        for (var i = 0; i < 5; i++)
+        {
+            var (done, current) = (step > i + 1, step == i + 1);
+            if (drawnStep != step)
+            {
+                DrawBadge(badges[i], i + 1, done, current);
+            }
+            titles[i].FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal;
+            titles[i].Opacity = done || current ? 1 : 0.6;
+            AutomationProperties.SetName(titles[i], $"Step {i + 1}, {StepTitles[i]}, {(done ? "done" : current ? "current step" : "not started")}");
+            Show(bodies[i], current);
+            if (summaries[i] is { } summary)
+            {
+                Show(summary, done && summary.Text.Length > 0);
+            }
+        }
+        drawnStep = step;
+
+        // 2: identify
+        Show(IdentifyBusy, s.Running == "identify");
+        Show(IdentifyButton, s.Running != "identify");
+        IdentifyButton.Content = s.Identified is null ? "Identify the dock" : "Try again";
+        IdentifyButton.IsEnabled = idle;
+        ShowNote(IdentifyNote, s.Identified);
+
+        // 3: apply the fix
+        var writing = s.Running == "patch";
+        var failed = !writing && s.AfterFailedWrite;
+        var missing = !writing && !failed && s.ImageError is not null;
+        Show(PatchWriting, writing);
+        Show(PatchFailed, failed);
+        PatchMissing.IsOpen = missing;
+        PatchMissing.Message = s.ImageError ?? "";
+        Show(PatchConfirm, !writing && !failed && !missing);
+        WriteAgainButton.IsEnabled = idle;
+        PatchButton.IsEnabled = idle && PatchWord.Text.Trim() == "ERASE";
+        ShowNote(PatchNote, s.Patched);
+        ShowProgress(PatchProgressText, PatchProgressBar);
+
+        // 4: restart
+        UnplugLine.Text = "1.  Unplug the USB-C cable from this computer." + (s.Unplugged ? "  Done." : "");
+        RestartWaiting.Text = s.Unplugged ? "Waiting for the dock to come back..." : "Waiting for you to unplug the cable...";
+
+        // 5: test
+        Show(PresentIcon, s.Present);
+        PresentText.Text = s.Present ? "Dock connected" : "Dock not connected";
+        TestDone.IsOpen = s.Reconnects >= 3;
+        TestDone.Title = $"Connected {s.Reconnects} times since the restart";
+        Show(TestCount, s.Reconnects is > 0 and < 3);
+        TestCount.Text = $"Connected {s.Reconnects} time(s) since the restart. Try it three times.";
+
+        // more options
+        RestoreButton.IsEnabled = idle && s.ImageError is null && !restoreAsked;
+        Show(RestoreConfirm, restoreAsked);
+        RestoreGo.IsEnabled = idle && RestoreWord.Text.Trim() == "ERASE";
+        Show(RestoreProgress, s.Running == "restore");
+        ShowProgress(RestoreProgressText, RestoreProgressBar);
+        ShowNote(RestoreNote, s.RestoreNote);
+        SkipCheck.IsChecked = s.AfterFailedWrite;
+        SkipCheck.IsEnabled = idle;
+        Show(ImagePanel, s.ImageError is not null);
+        ImageMissing.Message = s.ImageError ?? "";
+        UseImageButton.IsEnabled = idle && ImagePath.Text.Trim().Length > 0;
+        if (s.ImageError is not null && !moreOpened)
+        {
+            // a build without the firmware inside: this is where its image file is chosen
+            MoreExpander.IsExpanded = true;
+            moreOpened = true;
+        }
+
+        LogText.Text = engine.Log.Count == 0 ? "Nothing has been done yet." : string.Join("\n", engine.Log);
+    }
+
+    /// <summary>The step's number in a circle: a tick when done, filled when current.</summary>
+    private static void DrawBadge(Grid host, int number, bool done, bool current)
+    {
+        host.Children.Clear();
+        var circle = new Ellipse { Width = 28, Height = 28 };
+        if (done || current)
+        {
+            circle.Fill = new SolidColorBrush(done ? Done : Accent);
+        }
+        else
+        {
+            circle.Stroke = new SolidColorBrush(Upcoming);
+            circle.StrokeThickness = 1.5;
+        }
+        host.Children.Add(circle);
+        FrameworkElement mark = done
+            ? new FontIcon { Glyph = "", FontSize = 14, Foreground = new SolidColorBrush(Colors.White) }
+            : new TextBlock
+            {
+                Text = number.ToString(),
+                FontSize = 14,
+                FontWeight = current ? FontWeights.SemiBold : FontWeights.Normal,
+                Foreground = new SolidColorBrush(current ? Colors.White : Upcoming),
+            };
+        mark.HorizontalAlignment = HorizontalAlignment.Center;
+        mark.VerticalAlignment = VerticalAlignment.Center;
+        host.Children.Add(mark);
+    }
+
+    private static void Show(UIElement element, bool visible)
+    {
+        element.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>The outcome of an action, next to the action it belongs to.</summary>
+    private static void ShowNote(InfoBar bar, Note? note)
+    {
+        bar.IsOpen = note is not null && (!note.Ok || note.Text.Length > 0);
+        if (note is null)
+        {
+            return;
+        }
+        bar.Severity = note.Ok ? InfoBarSeverity.Success : InfoBarSeverity.Error;
+        bar.Title = note.Ok ? note.Text : "That did not work";
+        bar.Message = note.Ok ? "" : note.Text;
+    }
+
+    private void ShowProgress(TextBlock text, ProgressBar bar)
+    {
+        var progress = engine.Progress;
+        bar.IsIndeterminate = progress.Label.Length == 0;
+        bar.Value = progress.Fraction * 100;
+        text.Text = progress.Label.Length == 0 ? "Working..." : $"{progress.Label}: {Math.Round(progress.Fraction * 100)}%";
+    }
+
+    private void Identify_Click(object sender, RoutedEventArgs e) => engine.Send("identify");
+
+    private void WriteAgain_Click(object sender, RoutedEventArgs e) => engine.Send("patch");
+
+    private void Patch_Click(object sender, RoutedEventArgs e)
+    {
+        // the engine checks the typed word again before it starts
+        engine.Send($"patch {PatchWord.Text.Trim()}");
+        PatchWord.Text = "";
+    }
+
+    private void Restarted_Click(object sender, RoutedEventArgs e) => engine.Send("restarted");
+
+    private void RestoreAsk_Click(object sender, RoutedEventArgs e)
+    {
+        restoreAsked = true;
+        RestoreWord.Text = "";
+        Render();
+    }
+
+    private void Restore_Click(object sender, RoutedEventArgs e)
+    {
+        engine.Send($"restore {RestoreWord.Text.Trim()}");
+        restoreAsked = false;
+        RestoreWord.Text = "";
+        Render();
+    }
+
+    private void RestoreCancel_Click(object sender, RoutedEventArgs e)
+    {
+        restoreAsked = false;
+        Render();
+    }
+
+    private void SkipCheck_Click(object sender, RoutedEventArgs e) => engine.Send("skip-check " + (SkipCheck.IsChecked == true ? "on" : "off"));
+
+    private void UseImage_Click(object sender, RoutedEventArgs e) => engine.Send($"image {ImagePath.Text.Trim()}");
+
+    private void Text_Changed(object sender, TextChangedEventArgs e) => Render();
+}
