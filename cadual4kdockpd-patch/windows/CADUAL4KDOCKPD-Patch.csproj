@@ -37,6 +37,8 @@
     <None Include="..\target\release\cadual4kdockpd-patch.exe" Link="cadual4kdockpd-patch.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\target\release\cadual4kdockpd-patch.exe')" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.7.0" />
+    <!-- Only the WinUI part of the Windows App SDK (it brings the two parts it needs). The whole SDK
+         would add about 90 MB of AI, search and widget components this app never uses. -->
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.7.0" />
   </ItemGroup>
 </Project>

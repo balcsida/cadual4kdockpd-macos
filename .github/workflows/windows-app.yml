@@ -29,7 +29,7 @@ jobs:
       - name: Start the app and take a picture of the screen
         shell: powershell
         run: |
-          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
           $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
           function Test-Start($exe, $pictureFile) {
             $app = Start-Process -FilePath $exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
@@ -50,6 +50,14 @@ jobs:
               elseif ($app.HasExited) { "the app exited with code $($app.ExitCode)" }
               elseif ($app.MainWindowHandle -eq 0) { 'the app is running but has no window' }
               elseif (-not (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { 'the app did not start its engine' }
+            if (-not $problem) {
+              # What the window shows, read the way a screen reader would. The engine built here has no
+              # firmware image and says so; that sentence on screen proves its reports reach the window.
+              $shown = [System.Windows.Automation.AutomationElement]::FromHandle($app.MainWindowHandle).FindAll(
+                [System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }
+              if (-not ($shown -like '*Looking for the dock*')) { $problem = "the window does not show step 1. It shows: $($shown -join ' | ')" }
+              elseif (-not ($shown -like '*tps65982-image*')) { $problem = "the window does not show what the engine reports. It shows: $($shown -join ' | ')" }
+            }
             if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
             Start-Sleep -Seconds 4
             if (-not $problem -and (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { $problem = 'the engine kept running after the window was gone' }
@@ -62,7 +70,7 @@ jobs:
                 Format-List TimeCreated, ProviderName, Message
               exit 1
             }
-            Write-Host "${exe}: started, has a window, runs its engine, and the engine ends with it"
+            Write-Host "${exe}: started, shows the engine's report, and the engine ends with it"
           }
           Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB)) MB" }
           Test-Start 'app\CADUAL4KDOCKPD-Patch-App.exe' 'window.png'
