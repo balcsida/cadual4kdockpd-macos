@@ -1,5 +1,5 @@
-// The window's side of the engine: starts `cadual4kdockpd-patch.exe serve` (it sits next to this
-// program) and mirrors what it reports. The engine owns the dock and the whole flow (see
+// The window's side of the engine: starts `cadual4kdockpd-patch.exe serve` (it is unpacked next to
+// this program's own files) and mirrors what it reports. The engine owns the dock and the whole flow (see
 // ../src/serve.rs); nothing here talks to USB.
 
 using System;
@@ -74,6 +74,8 @@ public sealed class Engine
             StandardInputEncoding = utf8,
             StandardOutputEncoding = utf8,
         };
+        // a build for internal use carries the firmware image at the end of this program's own file
+        start.Environment["DOCK_IMAGE_IN"] = Environment.ProcessPath ?? "";
         try
         {
             process = Process.Start(start);

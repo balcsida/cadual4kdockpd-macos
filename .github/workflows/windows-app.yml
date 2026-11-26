@@ -1,7 +1,7 @@
 # Builds the Windows app: the WinUI 3 window plus the Rust engine it runs, without any firmware.
 # WinUI 3 can only be built on Windows, so this is where the Windows app comes from. The run also
 # starts the app once and keeps a picture of the screen, because nobody can see it start here.
-# Results: the artifacts "CADUAL4KDOCKPD-Patch-windows" (a folder to unzip and start) and "window-picture".
+# Results: the artifacts "CADUAL4KDOCKPD-Patch-windows" (one exe) and "window-picture".
 name: Windows app
 
 on:
@@ -24,15 +24,22 @@ jobs:
           dotnet-version: 10.0.x
       - run: cargo test
       - run: cargo build --release
-      # build, not publish: publish leaves out the app's own resource file (.pri), and the app then fails at start
-      - run: dotnet build windows -c Release -o app
-      - run: Copy-Item target/release/cadual4kdockpd-patch.exe app/
+      # the engine built above is packed into the exe
+      - run: dotnet publish windows -c Release -o app
       - name: Start the app and take a picture of the screen
         shell: powershell
         run: |
           $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
+          Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB)) MB" }
           $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch-App.exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
-          Start-Sleep -Seconds 20
+          # the first start unpacks the exe, so the window can take a while
+          foreach ($second in 1..120) {
+            Start-Sleep -Seconds 1
+            $app.Refresh()
+            if ($app.HasExited -or $app.MainWindowHandle -ne 0) { break }
+          }
+          Write-Host "waited $second s for the window"
+          Start-Sleep -Seconds 8
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
           $picture = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
@@ -49,7 +56,7 @@ jobs:
             Write-Host "--- what the app wrote"; Get-Content app-stderr.txt, app-stdout.txt -ErrorAction SilentlyContinue
             Write-Host "--- error files"; Get-ChildItem $env:TEMP -Filter 'CADUAL4KDOCKPD*' -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName }
             Write-Host "--- event log"
-            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-3) } -ErrorAction SilentlyContinue |
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-4) } -ErrorAction SilentlyContinue |
               Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' } |
               Format-List TimeCreated, ProviderName, Message
             exit 1
@@ -63,4 +70,4 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: CADUAL4KDOCKPD-Patch-windows
-          path: cadual4kdockpd-patch/app
+          path: cadual4kdockpd-patch/app/CADUAL4KDOCKPD-Patch-App.exe

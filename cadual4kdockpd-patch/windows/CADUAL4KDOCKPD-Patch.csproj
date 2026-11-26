@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- The WinUI 3 window. Build on Windows: dotnet build -c Release -o ..\app (see ../README.md). -->
+  <!-- The WinUI 3 window, published as one exe. Build on Windows: cargo build --release, then
+       dotnet publish -c Release -o ..\app (see ../README.md). -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
@@ -14,11 +15,21 @@
     <Nullable>enable</Nullable>
     <!-- Program.cs has the entry point, so that a failed start is reported instead of silent -->
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <!-- No installer and no store package: the published folder runs on a PC with nothing installed. -->
+    <!-- No installer and no store package: one exe that runs on a PC with nothing installed. At its
+         first start it unpacks itself into the user's temp folder. -->
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- the Windows App SDK requires this for a single file: it puts the app's resource file inside -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <DebugType>embedded</DebugType>
   </PropertyGroup>
+  <ItemGroup>
+    <!-- the engine travels inside the exe and is unpacked next to the window's own files -->
+    <None Include="..\target\release\cadual4kdockpd-patch.exe" Link="cadual4kdockpd-patch.exe" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\target\release\cadual4kdockpd-patch.exe')" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.7.0" />
   </ItemGroup>
