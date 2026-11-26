@@ -1,0 +1,61 @@
+# Builds the Windows app: the WinUI 3 window plus the Rust engine it runs, without any firmware.
+# WinUI 3 can only be built on Windows, so this is where the Windows app comes from. The run also
+# starts the app once and keeps a picture of the screen, because nobody can see it start here.
+# Results: the artifacts "CADUAL4KDOCKPD-Patch-windows" (a folder to unzip and start) and "window-picture".
+name: Windows app
+
+on:
+  push:
+    paths:
+      - cadual4kdockpd-patch/**
+      - .github/workflows/windows-app.yml
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cadual4kdockpd-patch
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - run: cargo test
+      - run: cargo build --release
+      - run: dotnet publish windows -c Release -o app
+      - run: Copy-Item target/release/cadual4kdockpd-patch.exe app/
+      - name: Start the app and take a picture of the screen
+        shell: powershell
+        run: |
+          $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
+          $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch.exe -PassThru
+          Start-Sleep -Seconds 20
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+          $picture = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+          [System.Drawing.Graphics]::FromImage($picture).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+          $picture.Save("$PWD\window.png")
+          $app.Refresh()
+          $problem = if (Test-Path $errorFile) { Get-Content $errorFile -Raw }
+            elseif ($app.HasExited) { "the app exited with code $($app.ExitCode)" }
+            elseif ($app.MainWindowHandle -eq 0) { 'the app is running but has no window' }
+            elseif (-not (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { 'the app did not start its engine' }
+          if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
+          if ($problem) {
+            Write-Host "FAILED: $problem"
+            Get-WinEvent -FilterHashtable @{ LogName = 'Application'; Level = 1, 2; StartTime = (Get-Date).AddMinutes(-5) } -ErrorAction SilentlyContinue |
+              Format-List TimeCreated, ProviderName, Message
+            exit 1
+          }
+          Write-Host 'the app started, has a window and runs its engine'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: window-picture
+          path: cadual4kdockpd-patch/window.png
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CADUAL4KDOCKPD-Patch-windows
+          path: cadual4kdockpd-patch/app
