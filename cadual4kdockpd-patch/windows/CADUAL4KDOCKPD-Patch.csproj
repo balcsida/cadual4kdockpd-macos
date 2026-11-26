@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- The WinUI 3 window, published as one exe. Build on Windows: cargo build --release, then
-       dotnet publish -c Release -o ..\app (see ../README.md). -->
+  <!-- The WinUI 3 window, published as one exe. Build on Windows: a release build of the engine with
+       cargo, then dotnet publish -c Release -o ..\app (see ../README.md). -->
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
