@@ -31,9 +31,6 @@ jobs:
         shell: powershell
         run: |
           $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
-          $files = Get-ChildItem app -Recurse -File
-          Write-Host "app folder: $($files.Count) files, $([math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB)) MB"
-          $files | Where-Object { $_.Extension -notin '.dll', '.mui', '.winmd' } | ForEach-Object { Write-Host "  $($_.FullName.Substring($PWD.Path.Length + 5))  $($_.Length)" }
           $app = Start-Process -FilePath app\CADUAL4KDOCKPD-Patch-App.exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
           Start-Sleep -Seconds 20
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing

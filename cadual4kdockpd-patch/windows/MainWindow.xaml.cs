@@ -57,9 +57,9 @@ public sealed partial class MainWindow : Window
         var idle = s.Running is null;
         var step = s.StepNumber;
 
-        StoppedBar.IsOpen = engine.Stopped is not null;
+        Open(StoppedBar, engine.Stopped is not null);
         StoppedBar.Message = engine.Stopped ?? "";
-        CloseRefusedBar.IsOpen = closeRefused && engine.Writing;
+        Open(CloseRefusedBar, closeRefused && engine.Writing);
 
         Summary2.Text = s.Identified?.Text ?? "";
         Summary3.Text = s.AlreadyPatched ? "Not needed: the fix is already in this dock." : "Written and verified.";
@@ -99,7 +99,7 @@ public sealed partial class MainWindow : Window
         var missing = !writing && !failed && s.ImageError is not null;
         Show(PatchWriting, writing);
         Show(PatchFailed, failed);
-        PatchMissing.IsOpen = missing;
+        Open(PatchMissing, missing);
         PatchMissing.Message = s.ImageError ?? "";
         Show(PatchConfirm, !writing && !failed && !missing);
         WriteAgainButton.IsEnabled = idle;
@@ -114,7 +114,7 @@ public sealed partial class MainWindow : Window
         // 5: test
         Show(PresentIcon, s.Present);
         PresentText.Text = s.Present ? "Dock connected" : "Dock not connected";
-        TestDone.IsOpen = s.Reconnects >= 3;
+        Open(TestDone, s.Reconnects >= 3);
         TestDone.Title = $"Connected {s.Reconnects} times since the restart";
         Show(TestCount, s.Reconnects is > 0 and < 3);
         TestCount.Text = $"Connected {s.Reconnects} time(s) since the restart. Try it three times.";
@@ -175,10 +175,17 @@ public sealed partial class MainWindow : Window
         element.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
     }
 
+    /// <summary>A closed message bar would still take up a row's spacing, so it is hidden as well.</summary>
+    private static void Open(InfoBar bar, bool open)
+    {
+        bar.IsOpen = open;
+        Show(bar, open);
+    }
+
     /// <summary>The outcome of an action, next to the action it belongs to.</summary>
     private static void ShowNote(InfoBar bar, Note? note)
     {
-        bar.IsOpen = note is not null && (!note.Ok || note.Text.Length > 0);
+        Open(bar, note is not null && (!note.Ok || note.Text.Length > 0));
         if (note is null)
         {
             return;
