@@ -122,8 +122,8 @@ DOCK_UPDATER=/path/to/DUD15X0D1_Update_E108.exe cargo test -- --ignored   # imag
   dotnet publish windows -c Release -o app
   ```
 
-  `app\CADUAL4KDOCKPD-Patch-App.exe` is the whole app: the window, the engine, .NET and the Windows App
-  SDK (about 90 MB; 64-bit Windows 10 1809 or later, nothing to install). At its first start it unpacks
+  `app\CADUAL4KDOCKPD-Patch-App.exe` is the whole app: the window, the engine and the parts of .NET and of
+  the Windows App SDK it uses (about 34 MB; 64-bit Windows 10 1809 or later, nothing to install). At its first start it unpacks
   itself into the user's temp folder (`%TEMP%\.net`), which takes a few seconds. The engine must be built
   first, because the publish step packs it in. `.github/workflows/windows-app.yml` at the top of the
   repository does the same on GitHub, starts the exe as a test and keeps it as the artifact of the run.
