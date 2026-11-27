@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::SystemServices::{SS_EDITCONTROL, SS_LEFT, SS_NOPREFIX, SS_OWNERDRAW};
+use windows_sys::Win32::System::SystemServices::{SS_EDITCONTROL, SS_ETCHEDVERT, SS_LEFT, SS_NOPREFIX, SS_OWNERDRAW};
 use windows_sys::Win32::UI::Controls::*;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
@@ -135,9 +135,12 @@ const HUB_TEXT: &str = "i-tec's update for the dock's two USB hubs does not affe
      i-tec's own program for it, CADUAL4KDOCKPD_9392.exe: Windows needs the driver that program installs to reach a hub. \
      Run it with the dock powered and nothing plugged into the dock, press Update FW, then restart the dock.";
 
-/// Space between two items, in device-independent pixels; the indent of a step's contents.
+/// Space between two items, in device-independent pixels; the indent of a step's title past its badge.
 const GAP: i32 = 10;
 const INDENT: i32 = 40;
+/// The width of the step list down the left, and the space between it and the current step.
+const SIDEBAR: i32 = 230;
+const COLUMN_GAP: i32 = 28;
 
 const fn rgb(r: u8, g: u8, b: u8) -> COLORREF {
     r as u32 | (g as u32) << 8 | (b as u32) << 16
@@ -163,8 +166,9 @@ enum Face {
     Icon,
     Circle,
     Mark,
+    Heading,
 }
-type Fonts = [HFONT; 9];
+type Fonts = [HFONT; 10];
 
 fn make_fonts(dpi: u32) -> Fonts {
     let font = |px: i32, weight: i32, name: &str| {
@@ -174,7 +178,7 @@ fn make_fonts(dpi: u32) -> Fonts {
         }
     };
     let icons = "Segoe MDL2 Assets";
-    [font(14, 400, "Segoe UI"), font(14, 600, "Segoe UI"), font(28, 600, "Segoe UI"), font(18, 400, "Segoe UI"), font(18, 600, "Segoe UI"), font(13, 400, "Consolas"), font(16, 400, icons), font(28, 400, icons), font(14, 400, icons)]
+    [font(14, 400, "Segoe UI"), font(14, 600, "Segoe UI"), font(28, 600, "Segoe UI"), font(18, 400, "Segoe UI"), font(18, 600, "Segoe UI"), font(13, 400, "Consolas"), font(16, 400, icons), font(28, 400, icons), font(14, 400, icons), font(22, 600, "Segoe UI")]
 }
 
 /// How a message box looks. Each kind has its own icon as well as its own colour.
@@ -240,6 +244,8 @@ struct MainControls {
     badges: [HWND; 5],
     titles: [HWND; 5],
     summaries: [HWND; 4],
+    rule: HWND,
+    heading: HWND,
     connect_text: HWND,
     connect_bar: HWND,
     connect_busy: HWND,
@@ -515,6 +521,8 @@ fn build_main(p: &mut Page) -> MainControls {
         badges: [(); 5].map(|()| drawn(p)),
         titles: [(); 5].map(|()| label(p, Face::Step)),
         summaries: [(); 4].map(|()| label(p, Face::Body)),
+        rule: control(p, "STATIC", SS_ETCHEDVERT, 0, 0, Face::Body),
+        heading: label(p, Face::Heading),
         connect_text: label(p, Face::Body),
         connect_bar: bar(p),
         connect_busy: label(p, Face::Body),
@@ -738,6 +746,9 @@ fn draw_main(l: &mut Layout, v: &View) {
     if v.close_refused && s.writing() {
         l.callout(c.close_refused, 0, Tone::Warning, "The app stays open until the dock has been written and checked", "");
     }
+    // the steps down the left, the current one's contents on the right: wide rather than tall
+    let (left, width, top) = (l.left, l.width, l.y);
+    l.width = l.px(SIDEBAR);
     // the last step has no step after it, so three plug-ins without a loop mark it done
     let passed = s.step == 5 && s.reconnects >= 3;
     let summaries = [
@@ -754,28 +765,41 @@ fn draw_main(l: &mut Layout, v: &View) {
         set_text(c.titles[i], STEP_TITLES[i]);
         l.face(c.titles[i], if current { Face::StepBold } else { Face::Step });
         colour(c.titles[i], if done || current { None } else { Some(SECONDARY) });
-        // the badge, and the title beside it
+        // the badge, the title beside it, and once done what came of it under the title
         let size = l.px(28);
-        let width = l.width - l.px(INDENT);
-        let height = measure(l.dc, l.font_of(c.titles[i]), STEP_TITLES[i], width);
+        let title_width = l.width - l.px(INDENT);
+        let height = measure(l.dc, l.font_of(c.titles[i]), STEP_TITLES[i], title_width);
         l.put(c.badges[i], l.left, l.y, size, size);
-        l.put(c.titles[i], l.left + l.px(INDENT), l.y + (size - height).max(0) / 2, width, height);
-        l.y += size.max(height) + l.px(GAP);
-        if let Some(summary) = summaries.get(i).filter(|summary| done && !summary.is_empty()) {
-            l.text(c.summaries[i], INDENT, summary);
-            colour(c.summaries[i], Some(SECONDARY));
-        }
-        if current {
-            match number {
-                1 => connect_step(l, c),
-                2 => identify_step(l, c, s),
-                3 => patch_step(l, v),
-                4 => restart_step(l, c, s),
-                _ => test_step(l, c, s),
+        l.put(c.titles[i], l.left + l.px(INDENT), l.y + (size - height).max(0) / 2, title_width, height);
+        l.y += size.max(height);
+        match summaries.get(i).filter(|summary| done && !summary.is_empty()) {
+            Some(summary) => {
+                l.space(2);
+                l.text(c.summaries[i], INDENT, summary);
+                colour(c.summaries[i], Some(SECONDARY));
             }
+            None => l.space(GAP),
         }
-        l.space(8);
+        l.space(4);
     }
+    let list_bottom = l.y;
+    let gap = l.px(COLUMN_GAP);
+    (l.left, l.width, l.y) = (left + l.px(SIDEBAR) + gap, width - l.px(SIDEBAR) - gap, top);
+    if let Some(title) = s.step.checked_sub(1).and_then(|i| STEP_TITLES.get(i)) {
+        l.text(c.heading, 0, title);
+    }
+    match s.step {
+        1 => connect_step(l, c),
+        2 => identify_step(l, c, s),
+        3 => patch_step(l, v),
+        4 => restart_step(l, c, s),
+        5 => test_step(l, c, s),
+        _ => {}
+    }
+    let bottom = l.y.max(list_bottom);
+    // a line between the two columns
+    l.put(c.rule, left + l.px(SIDEBAR) + gap / 2, top, l.px(2), bottom - top - l.px(GAP));
+    (l.left, l.width, l.y) = (left, width, bottom + l.px(8));
     let details = l.button(c.details, if v.details { "Hide details" } else { "Show details" });
     l.row(0, &[details]);
     if v.details {
@@ -787,72 +811,72 @@ fn draw_main(l: &mut Layout, v: &View) {
 }
 
 fn connect_step(l: &mut Layout, c: &MainControls) {
-    l.text(c.connect_text, INDENT, "Plug in the dock's power supply, then connect the dock to this computer.");
-    l.busy(c.connect_bar, c.connect_busy, INDENT, "Looking for the dock...");
-    l.text(c.connect_hint, INDENT, "If the dock does not show up within 10 seconds, unplug the cable, wait 3 seconds and plug it in again.");
+    l.text(c.connect_text, 0, "Plug in the dock's power supply, then connect the dock to this computer.");
+    l.busy(c.connect_bar, c.connect_busy, 0, "Looking for the dock...");
+    l.text(c.connect_hint, 0, "If the dock does not show up within 10 seconds, unplug the cable, wait 3 seconds and plug it in again.");
     colour(c.connect_hint, Some(SECONDARY));
 }
 
 fn identify_step(l: &mut Layout, c: &MainControls, s: &DockState) {
-    l.text(c.identify_text, INDENT, "A quick look at the dock. It only reads and takes a few seconds.");
+    l.text(c.identify_text, 0, "A quick look at the dock. It only reads and takes a few seconds.");
     if s.runs("identify") {
-        l.busy(c.identify_bar, c.identify_busy, INDENT, "Reading the dock...");
+        l.busy(c.identify_bar, c.identify_busy, 0, "Reading the dock...");
     } else {
         enable(c.identify_button, s.idle());
         let identify = l.button(c.identify_button, if s.identified.is_none() { "Identify the dock" } else { "Try again" });
-        l.row(INDENT, &[identify]);
+        l.row(0, &[identify]);
     }
-    l.note(c.identify_note, INDENT, &s.identified);
+    l.note(c.identify_note, 0, &s.identified);
 }
 
 fn patch_step(l: &mut Layout, v: &View) {
     let (c, s) = (&v.main, &v.state);
     let writing = s.runs("patch");
     if writing {
-        l.callout(c.writing, INDENT, Tone::Warning, "Keep the dock's power supply and the cable connected", "The dock is being checked, erased, written and checked again. This takes about 8 minutes.");
-        l.progress(c.patch_progress, c.patch_bar, INDENT, &v.progress);
+        l.callout(c.writing, 0, Tone::Warning, "Keep the dock's power supply and the cable connected", "The dock is being checked, erased, written and checked again. This takes about 8 minutes.");
+        l.progress(c.patch_progress, c.patch_bar, 0, &v.progress);
     } else if s.after_failed_write {
-        l.callout(c.failed, INDENT, Tone::Danger, "The write could not be verified. Do not unplug the dock's power supply.", "The dock keeps working as long as it stays powered. Write again now.");
+        l.callout(c.failed, 0, Tone::Danger, "The write could not be verified. Do not unplug the dock's power supply.", "The dock keeps working as long as it stays powered. Write again now.");
         enable(c.write_again, s.idle());
         let again = l.button(c.write_again, "Write again");
-        l.row(INDENT, &[again]);
+        l.row(0, &[again]);
     } else if let Some(missing) = &s.image_error {
-        l.callout(c.missing, INDENT, Tone::Danger, "The firmware image is missing", missing);
+        l.callout(c.missing, 0, Tone::Danger, "The firmware image is missing", missing);
     } else {
-        l.callout(c.confirm, INDENT, Tone::Warning, "This switches the setting \"Try.SRC\" off. It erases the dock's power controller and writes new firmware.", PATCH_WARNING);
+        l.callout(c.confirm, 0, Tone::Warning, "This switches the setting \"Try.SRC\" off. It erases the dock's power controller and writes new firmware.", PATCH_WARNING);
         enable(c.patch_button, s.idle() && window_text(c.patch_word).trim() == "ERASE");
         let row = [l.label(c.patch_label, "Type ERASE to confirm:"), l.field(c.patch_word, l.px(130)), l.button(c.patch_button, "Apply the fix")];
-        l.row(INDENT, &row);
-        l.note(c.patch_note, INDENT, &s.patched);
+        l.row(0, &row);
+        l.note(c.patch_note, 0, &s.patched);
     }
 }
 
 fn restart_step(l: &mut Layout, c: &MainControls, s: &DockState) {
-    l.callout(c.restart, INDENT, Tone::Success, "Written and verified", "The dock uses the new setting once it has been restarted.");
+    l.callout(c.restart, 0, Tone::Success, "Written and verified", "The dock uses the new setting once it has been restarted.");
     let lines = [
         format!("1.  Unplug the USB-C cable from this computer.{}", if s.unplugged { "  Done." } else { "" }),
         "2.  Unplug the dock's power supply and wait 15 seconds.".to_string(),
         "3.  Plug the power supply back in, then the cable.".to_string(),
     ];
     for (hwnd, line) in c.restart_lines.iter().zip(&lines) {
-        l.text(*hwnd, INDENT, line);
+        l.text(*hwnd, 0, line);
         l.space(-4);
     }
     l.space(4);
-    l.busy(c.restart_bar, c.restart_busy, INDENT, if s.unplugged { "Waiting for the dock to come back..." } else { "Waiting for you to unplug the cable..." });
+    l.busy(c.restart_bar, c.restart_busy, 0, if s.unplugged { "Waiting for the dock to come back..." } else { "Waiting for you to unplug the cable..." });
     let restarted = l.button(c.restarted, "I have restarted it");
-    l.row(INDENT, &[restarted]);
+    l.row(0, &[restarted]);
 }
 
 fn test_step(l: &mut Layout, c: &MainControls, s: &DockState) {
-    l.text(c.test_text, INDENT, "The loop only shows on a Mac: plug the dock into the Mac, where every plug-in should now bring it up within about 2 seconds. On this PC, unplug and replug the cable a few times to see that the dock still connects.");
-    l.text(c.present, INDENT, if s.present { "Dock connected" } else { "Dock not connected" });
+    l.text(c.test_text, 0, "The loop only shows on a Mac: plug the dock into the Mac, where every plug-in should now bring it up within about 2 seconds. On this PC, unplug and replug the cable a few times to see that the dock still connects.");
+    l.text(c.present, 0, if s.present { "Dock connected" } else { "Dock not connected" });
     colour(c.present, Some(if s.present { DONE } else { SECONDARY }));
     if s.reconnects >= 3 {
         let title = format!("Connected {} times since the restart", s.reconnects);
-        l.callout(c.test_done, INDENT, Tone::Success, &title, "The dock connects as before. You can close this window and test it on the Mac.");
+        l.callout(c.test_done, 0, Tone::Success, &title, "The dock connects as before. You can close this window and test it on the Mac.");
     } else if s.reconnects > 0 {
-        l.text(c.test_count, INDENT, &format!("Connected {} time(s) since the restart. Try it three times.", s.reconnects));
+        l.text(c.test_count, 0, &format!("Connected {} time(s) since the restart. Try it three times.", s.reconnects));
     }
 }
 
@@ -913,7 +937,8 @@ fn layout(page: usize) {
     let mut client = RECT { left: 0, top: 0, right: 0, bottom: 0 };
     unsafe { GetClientRect(hwnd, &mut client) };
     let pad = scale(if page == MAIN { 28 } else { 20 }, dpi);
-    let width = (client.right - pad * 2).clamp(scale(200, dpi), scale(724, dpi));
+    // the flow's two columns may grow wider; the other pages read best at a line length near this
+    let width = (client.right - pad * 2).clamp(scale(200, dpi), scale(if page == MAIN { 1000 } else { 724 }, dpi));
     let dc = unsafe { GetDC(hwnd) };
     let mut l = Layout { page, dc, dpi, fonts, left: pad, width, y: pad, scroll, shown: HashSet::new() };
     match page {
@@ -1254,7 +1279,9 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
             let dpi = unsafe { GetDpiForWindow(hwnd) }.max(96);
             // SAFETY: for WM_GETMINMAXINFO, lparam points to the sizes to fill in
             let sizes = unsafe { &mut *(lparam as *mut MINMAXINFO) };
-            sizes.ptMinTrackSize = POINT { x: scale(420, dpi), y: scale(320, dpi) };
+            // the flow needs room for its step list beside the current step
+            let narrowest = if hwnd as isize == MAIN_WINDOW.load(Ordering::Relaxed) { 720 } else { 420 };
+            sizes.ptMinTrackSize = POINT { x: scale(narrowest, dpi), y: scale(320, dpi) };
         }
         WM_CLOSE => close(hwnd),
         WM_DESTROY => {
@@ -1385,7 +1412,7 @@ fn start() -> Result<(), String> {
             })
         });
         let dpi = GetDpiForWindow(main).max(96);
-        SetWindowPos(main, null_mut(), 0, 0, scale(780, dpi), scale(860, dpi), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(main, null_mut(), 0, 0, scale(920, dpi), scale(600, dpi), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         ShowWindow(main, SW_SHOWNORMAL);
         refresh();
     }

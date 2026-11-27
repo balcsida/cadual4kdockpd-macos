@@ -11,9 +11,11 @@ let hubsWindow = "hubs", moreWindow = "more"
     var body: some Scene {
         Window("CADUAL4KDOCKPD Patch", id: "main") {
             FlowView(engine: engine)
-                .frame(minWidth: 560, minHeight: 520)
+                .frame(minWidth: 720)
         }
-        .defaultSize(width: 720, height: 780)
+        .defaultSize(width: 900, height: 560)
+        // the height follows the flow (see FlowView); only the width is the user's
+        .windowResizability(.contentSize)
         .commands { DockCommands() }
 
         // .commandsRemoved: the Dock menu opens these, so they add no items of their own
@@ -67,7 +69,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             try? await Task.sleep(for: .seconds(1))
             let windows = NSApp.windows.filter(\.isVisible)
-            windows.first?.setContentSize(NSSize(width: 720, height: 1040))
+            windows.first?.setContentSize(NSSize(width: 900, height: 1040))
             try? await Task.sleep(for: .seconds(1))
             for (index, window) in windows.enumerated() {
                 guard let view = window.contentView, let picture = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
