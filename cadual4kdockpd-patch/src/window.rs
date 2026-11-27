@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 use windows_sys::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, SIZE, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::*;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-use windows_sys::Win32::System::SystemServices::{SS_EDITCONTROL, SS_ETCHEDVERT, SS_LEFT, SS_NOPREFIX, SS_OWNERDRAW};
+use windows_sys::Win32::System::SystemServices::{SS_EDITCONTROL, SS_LEFT, SS_NOPREFIX, SS_OWNERDRAW};
 use windows_sys::Win32::UI::Controls::*;
 use windows_sys::Win32::UI::HiDpi::GetDpiForWindow;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::EnableWindow;
@@ -244,7 +244,6 @@ struct MainControls {
     badges: [HWND; 5],
     titles: [HWND; 5],
     summaries: [HWND; 4],
-    rule: HWND,
     heading: HWND,
     connect_text: HWND,
     connect_bar: HWND,
@@ -326,6 +325,8 @@ struct App {
     more: MoreControls,
     drawn: HashMap<isize, Drawn>,
     colours: HashMap<isize, COLORREF>,
+    /// The line between the flow's two columns, painted by the main window itself (`WM_PAINT`).
+    rule: Option<RECT>,
     close_refused: bool,
     restore_asked: bool,
     more_opened: bool,
@@ -521,7 +522,6 @@ fn build_main(p: &mut Page) -> MainControls {
         badges: [(); 5].map(|()| drawn(p)),
         titles: [(); 5].map(|()| label(p, Face::Step)),
         summaries: [(); 4].map(|()| label(p, Face::Body)),
-        rule: control(p, "STATIC", SS_ETCHEDVERT, 0, 0, Face::Body),
         heading: label(p, Face::Heading),
         connect_text: label(p, Face::Body),
         connect_bar: bar(p),
@@ -615,6 +615,8 @@ struct Layout {
     y: i32,
     scroll: i32,
     shown: HashSet<isize>,
+    /// Where the page paints a line of its own: decoration, so not a control a screen reader meets.
+    rule: Option<RECT>,
 }
 
 impl Layout {
@@ -798,7 +800,8 @@ fn draw_main(l: &mut Layout, v: &View) {
     }
     let bottom = l.y.max(list_bottom);
     // a line between the two columns
-    l.put(c.rule, left + l.px(SIDEBAR) + gap / 2, top, l.px(2), bottom - top - l.px(GAP));
+    let x = left + l.px(SIDEBAR) + gap / 2;
+    l.rule = Some(RECT { left: x, top: top - l.scroll, right: x + l.px(1).max(1), bottom: bottom - l.px(GAP) - l.scroll });
     (l.left, l.width, l.y) = (left, width, bottom + l.px(8));
     let details = l.button(c.details, if v.details { "Hide details" } else { "Show details" });
     l.row(0, &[details]);
@@ -940,13 +943,17 @@ fn layout(page: usize) {
     // the flow's two columns may grow wider; the other pages read best at a line length near this
     let width = (client.right - pad * 2).clamp(scale(200, dpi), scale(if page == MAIN { 1000 } else { 724 }, dpi));
     let dc = unsafe { GetDC(hwnd) };
-    let mut l = Layout { page, dc, dpi, fonts, left: pad, width, y: pad, scroll, shown: HashSet::new() };
+    let mut l = Layout { page, dc, dpi, fonts, left: pad, width, y: pad, scroll, shown: HashSet::new(), rule: None };
     match page {
         MAIN => draw_main(&mut l, &view),
         HUBS => draw_hubs(&mut l, &view),
         _ => draw_more(&mut l, &view),
     }
     unsafe { ReleaseDC(hwnd, dc) };
+    let edges = |rule: Option<RECT>| rule.map(|r| (r.left, r.top, r.right, r.bottom));
+    if with(|app| page == MAIN && edges(std::mem::replace(&mut app.rule, l.rule)) != edges(l.rule)) == Some(true) {
+        unsafe { InvalidateRect(hwnd, null(), 1) };
+    }
     for child in children {
         if !l.shown.contains(&(child as isize)) {
             unsafe { ShowWindow(child, SW_HIDE) };
@@ -1283,6 +1290,18 @@ unsafe extern "system" fn procedure(hwnd: HWND, message: u32, wparam: WPARAM, lp
             let narrowest = if hwnd as isize == MAIN_WINDOW.load(Ordering::Relaxed) { 720 } else { 420 };
             sizes.ptMinTrackSize = POINT { x: scale(narrowest, dpi), y: scale(320, dpi) };
         }
+        WM_PAINT => {
+            let mut paint: PAINTSTRUCT = unsafe { std::mem::zeroed() };
+            let dc = unsafe { BeginPaint(hwnd, &mut paint) };
+            if let Some(Some(rule)) = with(|app| app.rule.filter(|_| app.pages[MAIN].hwnd == hwnd)) {
+                unsafe {
+                    let brush = CreateSolidBrush(rgb(0xd8, 0xd8, 0xd8));
+                    FillRect(dc, &rule, brush);
+                    DeleteObject(brush);
+                }
+            }
+            unsafe { EndPaint(hwnd, &paint) };
+        }
         WM_CLOSE => close(hwnd),
         WM_DESTROY => {
             if hwnd as isize == MAIN_WINDOW.load(Ordering::Relaxed) {
@@ -1403,6 +1422,7 @@ fn start() -> Result<(), String> {
                 more: more_controls,
                 drawn: HashMap::new(),
                 colours: HashMap::new(),
+                rule: None,
                 close_refused: false,
                 restore_asked: false,
                 more_opened: false,
@@ -1412,7 +1432,7 @@ fn start() -> Result<(), String> {
             })
         });
         let dpi = GetDpiForWindow(main).max(96);
-        SetWindowPos(main, null_mut(), 0, 0, scale(920, dpi), scale(600, dpi), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+        SetWindowPos(main, null_mut(), 0, 0, scale(920, dpi), scale(560, dpi), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
         ShowWindow(main, SW_SHOWNORMAL);
         refresh();
     }
