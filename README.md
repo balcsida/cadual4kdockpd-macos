@@ -1,7 +1,9 @@
-# i-tec CADUAL4KDOCKPD on macOS
+# i-tec CADUAL4KDOCKPD tools
 
-Notes, scripts and tools for the i-tec CADUAL4KDOCKPD dock (USB-C, DisplayLink, 85 W power delivery)
-used with Macs. Not affiliated with i-tec, Good Way, Texas Instruments, Genesys Logic or Cable Matters.
+Notes, scripts and tools for the i-tec CADUAL4KDOCKPD dock (USB-C, DisplayLink, 85 W power delivery):
+the hub firmware update, the plug-in loop investigation and the fix for it. The investigation was done
+on Macs; the tool that applies the fix runs on macOS and on Windows. Not affiliated with i-tec, Good
+Way, Texas Instruments, Genesys Logic or Cable Matters.
 
 ## The plug-in loop, in short
 
@@ -27,6 +29,14 @@ used with Macs. Not affiliated with i-tec, Good Way, Texas Instruments, Genesys 
 | `dock-capture/gw-updater/GHIDRA.md` | How to load the firmware files into Ghidra |
 | `dock-capture/gw-updater/tools/` | Read-only query tools, the TPS65982 image checker and patcher, the flash write tool and its offline rehearsal |
 | `cadual4kdockpd-patch/` | App and command-line tool that applies the Try.SRC change to a dock of this exact model and, on macOS, can install the hub firmware: a Rust engine with a SwiftUI window for macOS and a WinUI 3 window for Windows. Read its README first |
+
+## Downloads
+
+The [Releases](../../releases) page holds the app that applies the fix, built by GitHub from this
+repository and without any firmware in it: `CADUAL4KDOCKPD-Patch-macos.zip` (the Mac app, Apple silicon
+and Intel) and `CADUAL4KDOCKPD-Patch-App.exe` (Windows, nothing to install). The Mac app is signed for
+local use only, so run `xattr -dr com.apple.quarantine "CADUAL4KDOCKPD Patch.app"` after unzipping it.
+Read `cadual4kdockpd-patch/README.md` before using either.
 
 ## Before you write anything to a dock
 
