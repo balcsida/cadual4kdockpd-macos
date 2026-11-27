@@ -10,10 +10,10 @@ Windows. Why that helps on Macs, and the evidence: [`../dock-capture/REPORT.md`]
   again without an external flash programmer. Use a dock you can afford to lose.
 - **Status of this tool.** The same sequence, sent by an earlier tool, patched one dock from macOS
   (2026-11-25). This Rust version sends byte-for-byte the same data frames and passes its tests against
-  a model of the chip, but it has not yet written a real dock, and it has never run on Windows hardware.
-  The Windows window (WinUI 3) has not been built or started yet: it can only be built on Windows.
-  On a Mac its C# was compiled against the WinUI 3 library and its XAML was checked against that
-  library's types; see Packaging.
+  a model of the chip. Through the Mac app it patched a dock on 2026-11-27: written and verified on the
+  first attempt, and after the restart the dock came back on 3 replugs. It has not yet written a dock
+  from Windows: the Windows app is built and started on GitHub's Windows machines for every change (see
+  Packaging), but has not been used with a dock.
 - **What you gain and lose** is described in the report: the dock stops looping on Macs; charging then
   depends on the computer accepting a power-role swap about half a second after plug-in.
 - You do this at your own risk. Not affiliated with i-tec, Good Way, Texas Instruments or Cable Matters.
