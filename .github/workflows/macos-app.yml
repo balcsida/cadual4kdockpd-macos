@@ -1,6 +1,7 @@
 # Builds the Mac app: the SwiftUI window plus the Rust engine it runs, for Apple silicon and Intel,
 # without any firmware. The run also starts the app once and keeps a picture of the screen.
 # Results: the artifacts "CADUAL4KDOCKPD-Patch-macos" (a zip holding the app) and "mac-window-picture".
+# Publishing a release on GitHub runs this too and attaches the zip to it, for anyone to download.
 # The app is signed for local use only: after downloading it, clear the download mark as the README says.
 name: Mac app
 
@@ -9,11 +10,15 @@ on:
     paths:
       - cadual4kdockpd-patch/**
       - .github/workflows/macos-app.yml
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: macos-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: cadual4kdockpd-patch
@@ -54,3 +59,8 @@ jobs:
         with:
           name: CADUAL4KDOCKPD-Patch-macos
           path: cadual4kdockpd-patch/CADUAL4KDOCKPD-Patch-macos.zip
+      - name: Attach the app to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" CADUAL4KDOCKPD-Patch-macos.zip --clobber

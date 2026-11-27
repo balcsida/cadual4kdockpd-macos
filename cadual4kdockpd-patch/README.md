@@ -118,7 +118,8 @@ DOCK_UPDATER=/path/to/DUD15X0D1_Update_E108.exe cargo test -- --ignored   # imag
   signs it with a certificate of yours instead (see the script); other Macs accept that without the
   step above only for a Developer ID certificate plus Apple's notarization.
   `.github/workflows/macos-app.yml` at the top of the repository does the same on GitHub, starts the app
-  as a test and keeps it, zipped, as the artifact of the run.
+  as a test and keeps it, zipped, as the artifact of the run. Publishing a release there attaches that
+  zip to it as `CADUAL4KDOCKPD-Patch-macos.zip`.
 - **Windows app:** one exe. WinUI 3 can only be built on Windows; there, with the .NET 10 SDK and Rust:
 
   ```sh
@@ -131,6 +132,7 @@ DOCK_UPDATER=/path/to/DUD15X0D1_Update_E108.exe cargo test -- --ignored   # imag
   itself into the user's temp folder (`%TEMP%\.net`), which takes a few seconds. The engine must be built
   first, because the publish step packs it in. `.github/workflows/windows-app.yml` at the top of the
   repository does the same on GitHub, starts the exe as a test and keeps it as the artifact of the run.
+  Publishing a release there attaches that exe to it.
 - **Windows engine from a Mac:** `cargo build --release --target x86_64-pc-windows-gnu` (needs `mingw-w64`)
   gives `cadual4kdockpd-patch.exe`, the command-line tool on its own.
 

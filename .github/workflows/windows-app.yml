@@ -2,6 +2,7 @@
 # WinUI 3 can only be built on Windows, so this is where the Windows app comes from. The run also
 # starts the app once and keeps a picture of the screen, because nobody can see it start here.
 # Results: the artifacts "CADUAL4KDOCKPD-Patch-windows" (one exe) and "window-picture".
+# Publishing a release on GitHub runs this too and attaches the exe to it, for anyone to download.
 name: Windows app
 
 on:
@@ -9,11 +10,15 @@ on:
     paths:
       - cadual4kdockpd-patch/**
       - .github/workflows/windows-app.yml
+  release:
+    types: [published]
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
+    permissions:
+      contents: write
     defaults:
       run:
         working-directory: cadual4kdockpd-patch
@@ -97,3 +102,8 @@ jobs:
         with:
           name: CADUAL4KDOCKPD-Patch-windows
           path: cadual4kdockpd-patch/app/CADUAL4KDOCKPD-Patch-App.exe
+      - name: Attach the exe to the release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" app/CADUAL4KDOCKPD-Patch-App.exe --clobber
