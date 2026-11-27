@@ -18,7 +18,7 @@ Not affiliated with i-tec, Good Way, Texas Instruments, Genesys Logic or Cable M
 - With that one bit cleared, 20 of 20 plug-ins connected on the tested unit, on three Mac ports,
   including 7 that started with the Mac as the power source. An unpatched second unit looped on 5 of 7
   plug-ins on the same Mac the same evening.
-- Evidence so far: one patched dock, one Mac, one cable, one day. Full account:
+- The measurements above come from one patched dock, one Mac, one cable, one day. Full account:
   [`dock-capture/REPORT.md`](dock-capture/REPORT.md).
 
 ## Before you use it
@@ -29,8 +29,9 @@ Not affiliated with i-tec, Good Way, Texas Instruments, Genesys Logic or Cable M
   to lose.
 - The app refuses a dock whose flash content differs from the one it expects, and erases nothing before
   that check.
-- **How far it has been tried.** The Mac app has patched a dock (2026-11-27). Nothing has written a dock
-  from Windows yet: the Windows app has only been started on GitHub's machines, without a dock.
+- **How far it has been tried.** As of 2026-11-27, five docks have been patched successfully. Nothing
+  has written a dock from Windows yet: the Windows app has only been started on GitHub's machines,
+  without a dock.
 - Afterwards, charging depends on the computer accepting a power-role swap about half a second after
   plug-in. The test Mac always did.
 - Texas Instruments' own update for this controller rewrites one of its two firmware copies at a time
