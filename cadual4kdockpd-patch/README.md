@@ -52,8 +52,6 @@ you to type `ERASE`; the engine checks that word again. The log is a box of its 
 hub update and restoring the original firmware are out of the flow, in windows of their own opened from
 the "Dock" menu. The app cannot be closed while a write is running.
 
-<img src="screenshot-macos.png" width="720" alt="The Mac app after a successful run: the five steps down the left, all ticked, and the test result on the right">
-
 The same from a terminal:
 
 ```sh
