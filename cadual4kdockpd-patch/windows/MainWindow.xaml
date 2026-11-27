@@ -214,7 +214,8 @@
                 <CheckBox x:Name="SkipCheck" Content="An earlier write was not verified: skip the content check next time" Click="SkipCheck_Click" />
                 <StackPanel x:Name="ImagePanel" Spacing="10">
                     <InfoBar x:Name="ImageMissing" IsOpen="True" IsClosable="False" Severity="Warning" Title="The firmware image is missing" />
-                    <TextBlock TextWrapping="Wrap" Text="The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Give that file's path:" />
+                    <TextBlock TextWrapping="Wrap" Text="The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Download it, do not run it, and give its path here." />
+                    <HyperlinkButton Content="Open Cable Matters' download page" NavigateUri="https://kb.cablematters.com/index.php?View=entry&amp;EntryID=129" Padding="0" />
                     <Grid ColumnSpacing="10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />

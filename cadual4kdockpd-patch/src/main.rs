@@ -66,6 +66,7 @@ usage:
 
 DIR is a folder holding Hub_1_9392_L1.ROM and Hub_1_9392_L2.ROM from i-tec's Patch_CADUAL4KDOCKPD.
 IMAGE is Cable Matters' DUD15X0D1_Update_E108.exe, or a file holding only the power controller image from it.
+Download the updater from https://kb.cablematters.com/index.php?View=entry&EntryID=129 but do not run it.
 Both are needed unless the firmware was built into this program.
 Add --after-failed-write to patch or restore only when an earlier run ended with NOT VERIFIED.
 Read the README first: losing the dock's power during a write leaves the dock unusable.
@@ -168,7 +169,9 @@ fn images(file: Option<&str>) -> Result<Images, String> {
     match (file, EMBEDDED_IMAGE) {
         (Some(path), _) => image::from_updater(&std::fs::read(path).map_err(|e| format!("cannot read {path}: {e}"))?),
         (None, Some(image)) => image::from_updater(image),
-        (None, None) => Err("this build has no built-in firmware image: give the image file".into()),
+        (None, None) => Err("this build has no built-in firmware image: give the image file, Cable Matters' DUD15X0D1_Update_E108.exe \
+                             from https://kb.cablematters.com/index.php?View=entry&EntryID=129 (download it, do not run it)"
+            .into()),
     }
 }
 

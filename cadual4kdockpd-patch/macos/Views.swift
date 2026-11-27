@@ -264,8 +264,9 @@ struct MoreView: View {
             if let missing = state.imageError {
                 Callout(tone: .warning, title: "The firmware image is missing") {
                     Text(missing)
-                    Text("The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Give that file's path:")
+                    Text("The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Download it, do not run it, and give its path here.")
                 }
+                Link("Open Cable Matters' download page", destination: URL(string: "https://kb.cablematters.com/index.php?View=entry&EntryID=129")!)
                 HStack {
                     TextField("Path of the file", text: $imagePath)
                         .textFieldStyle(.roundedBorder)

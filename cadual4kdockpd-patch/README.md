@@ -27,8 +27,10 @@ Windows. Why that helps on Macs, and the evidence: [`../dock-capture/REPORT.md`]
 2. The firmware updater that Cable Matters publishes for a dock on the same platform. This tool takes
    the power controller image out of it; no firmware is included here. Do not run that file.
    Page: <https://kb.cablematters.com/index.php?View=entry&EntryID=129>, file `DUD15X0D1_Update_E108.exe`
-   (SHA-256 `1d5a9170def9e280716e9f116426fe3c312e0e42e83b3c55d790d6547816220b`).
-3. Rust, to build: `cargo build --release`. The program is `target/release/cadual4kdockpd-patch`.
+   (SHA-256 `1d5a9170def9e280716e9f116426fe3c312e0e42e83b3c55d790d6547816220b`). The app links to that
+   page when it cannot find the file, and the command-line tool names it.
+3. The app from the [Releases](../../../releases) page, or Rust to build the tool yourself:
+   `cargo build --release`. The program is `target/release/cadual4kdockpd-patch`; Packaging has the apps.
 
 ## Use
 
