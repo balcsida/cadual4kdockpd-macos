@@ -1,6 +1,6 @@
 [package]
 name = "cadual4kdockpd-patch"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 description = "Switches Try.SRC off in the i-tec CADUAL4KDOCKPD dock's power controller, over USB"
 publish = false
