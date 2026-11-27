@@ -26,7 +26,8 @@ The failure is decided at the USB-C attach, before USB and before any PD message
   connected and 3 looped, with the same loop signature. See "After the flash".
 - 2026-11-25: switching off one setting (Try.SRC) in the dock's TI power controller removed the loop on
   this unit: 11 of 11 fresh attaches connected, including 7 that started with the Mac as source, the
-  case that looped every time before. See "Test 10".
+  case that looped every time before. Nine more plug-ins later that evening, on three Mac ports, also
+  connected, while an unpatched second unit looped on 5 of 7. See "Test 10".
 
 Of A-D: A is the nearest (medium-high confidence), reworded as "the Type-C attach/power-role resolution
 keeps restarting; the hubs never get as far as reacting". B, C and D are ruled out for this failure
@@ -208,6 +209,34 @@ cable out of the Mac. Same Mac, port and cable as before. Capture: `sampler-patc
 This supports the interpretation above: the loop was the dock's Try.SRC behaviour meeting the Mac's
 timing, and it is a configuration matter, not a hardware fault of the unit.
 
-Not tested: other Mac ports, the other cable end, MagSafe connected, sleep and wake, other Macs, other
+Later the same evening (18:49-18:54, unguided; from the attach and detach messages in the stored system
+log and a 5 s sampler):
+
+- The patched dock was plugged in 9 more times on three Mac ports. All 9 connected at 85 W, each with a
+  single attach. Total after the change: 20 of 20.
+- A second dock (different device serial numbers; assumed to be a spare unit of the same model, not
+  patched) was plugged in 7 times on two ports. Five plug-ins looped (attached for about 0.16 s every
+  0.86 s, 3 to 25 attempts until unplugged) and 2 connected, both starting with the dock as source.
+  That is the original behaviour, on the same Mac and the same evening.
+
+Not tested: the other cable end, MagSafe connected, sleep and wake, other Macs, other
 units of the dock, runs longer than 44 min. To go back, write `gw-updater/itec-ti-flash-original.bin`
 with the same tool.
+
+## Addendum 2026-11-27: what Texas Instruments' documents add
+
+Read offline; nothing was sent to the dock. Details and sources: `gw-updater/PROTOCOL.md`, "What TI's
+documents add".
+
+- The bit that was cleared is the one TI documents as TrySRCSupport: bit 42 of the System Configuration
+  register, "Type-C State Machine supports Try.SRC and Try.SNKWait".
+- "Not reachable over USB" above has a reason. The controller has a USB endpoint of its own
+  (`0451:ACE1`, the device fwupd's `ti_tps6598x` plugin looks for) and the dock's configuration enables
+  it, but the controller only shows it when no alternate mode has been entered one second after the
+  attach. The dock offers DisplayPort alternate mode and the Mac enters it on every attach: all 11
+  attaches in `syslog-patched.log` set a DisplayPort pin assignment. The monitors still run over
+  DisplayLink; that transport never becomes active.
+- TI's own update rewrites one of the two firmware copies at a time, so a power loss cannot leave the
+  dock without firmware. It runs inside the controller and needs that endpoint or the controller's I2C
+  pins. The dock's management chip, which the write here goes through, can only erase the whole flash.
+- Not tested: whether `0451:ACE1` appears on a host that does not enter DisplayPort mode.

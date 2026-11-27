@@ -7,7 +7,10 @@ Windows. Why that helps on Macs, and the evidence: [`../dock-capture/REPORT.md`]
 
 - **You can lose the dock.** The dock's flash can only be written after erasing the whole chip. If the
   dock loses its own power between the erase and the verified write (a few minutes), it will not start
-  again without an external flash programmer. Use a dock you can afford to lose.
+  again without an external flash programmer. Use a dock you can afford to lose. The controller has
+  an update method of its own that would survive this, but the dock gives the computer no way to use
+  it in normal use: see "What TI's documents add" in
+  [`PROTOCOL.md`](../dock-capture/gw-updater/PROTOCOL.md).
 - **Status of this tool.** The same sequence, sent by an earlier tool, patched one dock from macOS
   (2026-11-25). This Rust version sends byte-for-byte the same data frames and passes its tests against
   a model of the chip. Through the Mac app it patched a dock on 2026-11-27: written and verified on the

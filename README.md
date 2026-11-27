@@ -13,9 +13,10 @@ Way, Texas Instruments, Genesys Logic or Cable Matters.
   is first, it loops.
 - Updating the dock's two USB hubs from firmware 93.05 to 93.92 did not change this.
 - The dock's TI TPS65982 power controller is configured with Try.SRC on. With that one bit cleared
-  (written over USB through the dock's own management chip), 11 of 11 plug-ins connected on the tested
-  unit, including 7 that started with the Mac as the power source.
-- Evidence so far: one dock, one Mac, one cable, one afternoon. Full account: `dock-capture/REPORT.md`.
+  (written over USB through the dock's own management chip), 20 of 20 plug-ins connected on the tested
+  unit, on three Mac ports, including 7 that started with the Mac as the power source. An unpatched
+  second unit looped on 5 of 7 plug-ins on the same Mac the same evening.
+- Evidence so far: one patched dock, one Mac, one cable, one day. Full account: `dock-capture/REPORT.md`.
 
 ## What is here
 
@@ -44,6 +45,10 @@ The management chip can only write the power controller's flash after erasing th
 dock loses its own power between the erase and a verified write, it will not start again without an
 external flash programmer. The write tool refuses a dock whose flash content differs from the one
 described here. Read `dock-capture/gw-updater/PROTOCOL.md` first. You do this at your own risk.
+
+Texas Instruments' own update for this controller rewrites one of its two firmware copies at a time and
+would survive a power loss. It needs an interface that this dock does not give a Mac in normal use;
+`PROTOCOL.md`, "What TI's documents add", has what is known and what is still to be tested.
 
 ## Not in this repository
 

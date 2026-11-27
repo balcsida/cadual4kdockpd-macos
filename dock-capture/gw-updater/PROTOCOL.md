@@ -145,7 +145,8 @@ uses the high region. It reads the flash only at boot.
   buffer.
 
 Risks of writing: (1) the dock losing its own power between the erase and the verified write (a few
-minutes) leaves the TI flash empty, and recovery then needs an external flash programmer; (2) the patch
+minutes) leaves the TI flash empty, and recovery then needs an external flash programmer (or, untried,
+the controller's debug interface: see "What TI's documents add"); (2) the patch
 is an experiment: with Try.SRC off the dock stays sink when the Mac is source first, negotiates 5 V and
 asks for a power-role swap (InitiateSwapToSource is set); whether that goes well on a Mac is not known;
 (3) the dock's hubs may re-enumerate once during that swap. The new configuration loads only after the
@@ -220,3 +221,69 @@ Details: `../REPORT.md`, "Test 10".
 
 If the tool ends with NOT VERIFIED: keep the dock powered, do not power-cycle, read `tiwrite-run.log`
 (it logs unexpected replies), run step 1 to see the flash state, and rerun step 2 with `--expect-current any`.
+
+## What TI's documents add (2026-11-27, offline: nothing was sent to the dock)
+
+Read: the TPS65982 datasheet (SLVSD02E), "TPS6598x FW Update From Embedded Controller Over I2C"
+(SLVA783A), the TPS65982 Firmware User's Guide (SLVUAH7, June 2015) and TI's TPS6598x Utilities 2.4
+(SLVC639D: Python scripts, described in SLVA701). The scripts' headers allow redistribution and use with
+or without modification.
+
+**The bit.** Register 0x28 is one little-endian bit field (`tSysConfig82` in SLVA783A, the 0x28 table in
+SLVUAH7). TrySRCSupport is bit 42, "Type-C State Machine supports Try.SRC and Try.SNKWait": bit 2 of the
+byte at 0x28F9, the bit the patch clears. The dock's whole value `8d 03 3f 15 2e 0c 15 2a` decodes with
+that layout: PortInfo 101b, receptacle, 3 A, BillboardAllowed (bit 43) = 1, and both USB path bits
+(34..33) set. SLVA783A names those two USBRPenable and USBEPenable; SLVUAH7 calls 11b reserved.
+
+**Other registers in the configuration block** (same record layout as above, decoded with SLVUAH7):
+
+| Register | Data on the dock | Meaning |
+|---|---|---|
+| 0x51 DP SID Configuration | `03 45 00 0c 01 00 06` | DisplayPort alternate mode enabled: UFP_D, receptacle, pin assignments C and D, multifunction preferred |
+| 0x52 Intel VID Configuration | first byte `00` | Thunderbolt mode off |
+| 0x47 TX Identity | `03`, then `51 04 00 44`, `51 04 00 00`, `10 00 34 12` | 3 identity objects: USB device with modal operation, vendor 0x0451, product 0x1234 |
+
+**TI's update, which survives a power loss.** The flash holds the firmware twice so that one copy can be
+rewritten while the other still boots (datasheet 9.4.5 and 9.4.6, SLVUAH7 4.4). The controller does the
+flash work itself, on 4CC commands written to its Cmd1/Data1 registers (0x08/0x09):
+
+| 4CC | Does |
+|---|---|
+| `FLrr` | returns the address of region 0 or 1 |
+| `FLer` | erases a region pointer |
+| `FLem` | erases n 4 KB sectors from an address |
+| `FLad` | sets the write address |
+| `FLwd` | writes up to 64 bytes there and advances |
+| `FLvy` | verifies the region whose header address is given |
+| `FLrd` | reads 16 bytes from an address |
+
+SLVA783A, and `flash_update_region_0.py` and `flash_update_region_1.py` in the Utilities, rewrite one
+region, verify it, and only then the other. The patch changes 5 bytes of the low region only. Over this
+path an interrupted write would leave a dock that boots its high region, unpatched but alive; and with
+`FLrd` the dock's own content could be read, so the vendor's image file would not be needed.
+
+The management chip cannot do this. It drives the flash itself as an SPI master, and its only erase is
+the chip erase (see "Write path"). TI's commands need the controller's host interface:
+
+- I2C, on pins inside the dock. TI's scripts use a Total Phase Aardvark or an FTDI adapter wired to them.
+  The management chip's command table has nothing that passes I2C through.
+- The controller's own USB endpoint, `0451:ACE1`: vendor control requests on endpoint 0, request 0xFE
+  reads and 0xFD writes a register, wValue = register number, writes in pieces of 8 bytes (`usbep.py`).
+  This is the device fwupd's `ti_tps6598x` plugin looks for.
+
+**Whether that endpoint ever shows on this dock.** The configuration enables it. SLVUAH7 10.2: after
+attaching as a UFP, if no alternate mode has been entered for one second, the controller exposes the USB
+Billboard on its integrated endpoint (endpoint 0 only). A Mac does enter one: in `syslog-patched.log`
+each of the 11 attaches has `setDisplayPortPinAssignment(): dpPinAssignment: 3` and `maxLaneCount: 2`.
+The DisplayPort transport never becomes active; the monitors run over DisplayLink. No capture shows a
+0451 USB device, and fwupd found none (`../REPORT.md`, "Could not observe").
+
+Not tested: a host that does not enter DisplayPort mode, such as a USB-C port without DisplayPort or a
+USB-A to USB-C cable. If `0451:ACE1` appears there, TI's update can be driven over USB from that host.
+Not known: whether the dock's board connects the controller's endpoint to the cable at all.
+
+**A dock whose flash is empty.** With no valid region the controller runs its "memory invalid" flow
+(datasheet 9.4.7): it does not behave as a USB-C port. It checks VBUS, presents Rp on both CC pins, and
+when it sees Rd on both (a debug accessory) it puts its SWD debug interface on the SBU pins. So a flash
+programmer on the flash chip is not the only conceivable way back. This has not been tried, and no
+public tool that would rewrite the flash over that interface is known here.
