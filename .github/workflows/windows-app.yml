@@ -1,6 +1,6 @@
-# Builds the Windows app: the WinUI 3 window plus the Rust engine it runs, without any firmware.
-# WinUI 3 can only be built on Windows, so this is where the Windows app comes from. The run also
-# starts the app once and keeps a picture of the screen, because nobody can see it start here.
+# Builds the Windows app: one exe, the Rust engine with its Win32 window (`--features window`), without
+# any firmware. The run also starts the app once and keeps a picture of the screen, because nobody can
+# see it start here.
 # Results: the artifacts "CADUAL4KDOCKPD-Patch-windows" (one exe) and "window-picture".
 # Publishing a release on GitHub runs this too and attaches the exe to it, for anyone to download.
 name: Windows app
@@ -24,13 +24,13 @@ jobs:
         working-directory: cadual4kdockpd-patch
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: 10.0.x
-      - run: cargo test
-      - run: cargo build --release
-      # the engine built above is packed into the exe
-      - run: dotnet publish windows -c Release -o app
+      - run: cargo test --features window
+      - run: cargo build --release --features window
+      - name: Name the app
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory app | Out-Null
+          Copy-Item target\release\cadual4kdockpd-patch.exe app\CADUAL4KDOCKPD-Patch-App.exe
       - name: Start the app and take a picture of the screen
         shell: powershell
         run: |
@@ -38,46 +38,52 @@ jobs:
           $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
           function Test-Start($exe, $pictureFile) {
             $app = Start-Process -FilePath $exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
-            # the first start unpacks the exe, so the window can take a while
-            foreach ($second in 1..120) {
+            foreach ($second in 1..60) {
               Start-Sleep -Seconds 1
               $app.Refresh()
               if ($app.HasExited -or $app.MainWindowHandle -ne 0) { break }
             }
             Write-Host "${exe}: waited $second s for the window"
-            Start-Sleep -Seconds 8
+            Start-Sleep -Seconds 6
             $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
             $picture = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
             [System.Drawing.Graphics]::FromImage($picture).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
             $picture.Save("$PWD\$pictureFile")
             $app.Refresh()
+            # the engine is this same exe, started by the window as "serve"
+            $engine = Get-CimInstance Win32_Process -Filter "ParentProcessId = $($app.Id)" | Where-Object { $_.CommandLine -like '* serve' }
             $problem = if (Test-Path $errorFile) { Get-Content $errorFile -Raw }
               elseif ($app.HasExited) { "the app exited with code $($app.ExitCode)" }
               elseif ($app.MainWindowHandle -eq 0) { 'the app is running but has no window' }
-              elseif (-not (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { 'the app did not start its engine' }
+              elseif (-not $engine) { 'the app did not start its engine' }
             if (-not $problem) {
-              # What the window shows, read the way a screen reader would. The engine built here has no
-              # firmware image and says so; that sentence on screen proves its reports reach the window.
-              $shown = [System.Windows.Automation.AutomationElement]::FromHandle($app.MainWindowHandle).FindAll(
-                [System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }
+              # What the app's windows show, read the way a screen reader would. The engine built here has
+              # no firmware image and says so; that sentence on screen proves its reports reach the window.
+              # It is in "More options", a window of its own, so every window of the app is read.
+              $auto = [System.Windows.Automation.AutomationElement]
+              $mine = New-Object System.Windows.Automation.PropertyCondition($auto::ProcessIdProperty, $app.Id)
+              $shown = $auto::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $mine) | ForEach-Object {
+                $_.Current.Name
+                $_.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object { $_.Current.Name }
+              }
               if (-not ($shown -like '*Looking for the dock*')) { $problem = "the window does not show step 1. It shows: $($shown -join ' | ')" }
               elseif (-not ($shown -like '*tps65982-image*')) { $problem = "the window does not show what the engine reports. It shows: $($shown -join ' | ')" }
             }
             if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
             Start-Sleep -Seconds 4
-            if (-not $problem -and (Get-Process cadual4kdockpd-patch -ErrorAction SilentlyContinue)) { $problem = 'the engine kept running after the window was gone' }
+            if (-not $problem -and (Get-Process -Id $engine.ProcessId -ErrorAction SilentlyContinue)) { $problem = 'the engine kept running after the window was gone' }
             if ($problem) {
               Write-Host "FAILED: ${exe}: $problem"
               Write-Host "--- what the app wrote"; Get-Content app-stderr.txt, app-stdout.txt -ErrorAction SilentlyContinue
               Write-Host "--- event log"
               Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-4) } -ErrorAction SilentlyContinue |
-                Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' } |
+                Where-Object { $_.ProviderName -in 'Application Error', 'Windows Error Reporting' } |
                 Format-List TimeCreated, ProviderName, Message
               exit 1
             }
             Write-Host "${exe}: started, shows the engine's report, and the engine ends with it"
           }
-          Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB)) MB" }
+          Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB, 1)) MB" }
           Test-Start 'app\CADUAL4KDOCKPD-Patch-App.exe' 'window.png'
           # A build for internal use gets a firmware image attached to the end of the exe, and people
           # rename files. Neither may stop the app from starting; stand-in bytes are enough to test that.

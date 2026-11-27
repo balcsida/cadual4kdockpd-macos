@@ -14,11 +14,30 @@ sha2 = "0.11"
 # the optional hub update; libusb is compiled in. Windows does not let a program talk to a hub this way
 rusb = { version = "0.9", features = ["vendored"] }
 
+[target.'cfg(windows)'.dependencies]
+# the Windows window (feature "window"): plain Win32 controls, and serde_json to read the engine's lines
+serde_json = { version = "1", optional = true }
+windows-sys = { version = "0.61", optional = true, features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_SystemServices",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
 [features]
 # Builds the firmware into the program, from the files named by these environment variables (absolute
 # paths): DOCK_IMAGE_FILE (power controller image), DOCK_HUB_L1_FILE and DOCK_HUB_L2_FILE (i-tec's hub
 # images). Such a build contains vendor firmware: do not publish it.
 embedded-image = []
+# Windows only: the program becomes the app. Started without arguments it opens the window
+# (src/window.rs), which runs the same program again as `serve`. A GUI program, so the command-line
+# use needs the build without this feature.
+window = ["dep:serde_json", "dep:windows-sys"]
 
 [profile.release]
 strip = true

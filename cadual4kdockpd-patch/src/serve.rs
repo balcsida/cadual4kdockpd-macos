@@ -1,4 +1,4 @@
-//! The engine behind the two native windows (SwiftUI on macOS, WinUI 3 on Windows).
+//! The engine behind the two native windows (SwiftUI on macOS, Win32 in `window.rs` on Windows).
 //!
 //! `serve` reads one command per line from standard input and writes one JSON object per line to
 //! standard output. It owns the guided flow (connect, identify, apply the fix, restart, test), so the

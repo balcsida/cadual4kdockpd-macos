@@ -4,6 +4,9 @@
 //! Background and evidence: `dock-capture/REPORT.md`. Read this crate's README before using it:
 //! a write that is interrupted by a power loss leaves the dock unusable.
 
+// the Windows app: no console window behind it (see window.rs)
+#![cfg_attr(all(windows, feature = "window"), windows_subsystem = "windows")]
+
 use std::sync::{Mutex, MutexGuard, mpsc};
 
 /// Set while serving a window: output then goes to the window as JSON lines (see `serve.rs`).
@@ -50,6 +53,8 @@ mod dock;
 mod hubs;
 mod image;
 mod serve;
+#[cfg(all(windows, feature = "window"))]
+mod window;
 
 use dock::{Dock, Transport, VERSION_E103};
 use image::{IMAGE_LEN, Images, sum16};
@@ -301,6 +306,10 @@ fn main() -> ExitCode {
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     if args == ["serve"] {
         return serve::run();
+    }
+    #[cfg(all(windows, feature = "window"))]
+    if args.is_empty() {
+        return window::run();
     }
     match run(&args) {
         Ok(done) => {

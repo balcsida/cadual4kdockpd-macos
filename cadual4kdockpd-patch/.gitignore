@@ -1,5 +1,3 @@
 /target
-# output of building the Windows app
+# the Windows app as CI names it
 /app
-/windows/bin
-/windows/obj

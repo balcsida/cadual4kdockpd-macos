@@ -28,7 +28,7 @@ Way, Texas Instruments, Genesys Logic or Cable Matters.
 | `dock-capture/gw-updater/PROTOCOL.md` | USB HID protocol of the dock's management chip (Good Way, `065f:f60f`), how the power controller's flash was read and written through it, and the run sheet |
 | `dock-capture/gw-updater/GHIDRA.md` | How to load the firmware files into Ghidra |
 | `dock-capture/gw-updater/tools/` | Read-only query tools, the TPS65982 image checker and patcher, the flash write tool and its offline rehearsal |
-| `cadual4kdockpd-patch/` | App and command-line tool that applies the Try.SRC change to a dock of this exact model and, on macOS, can install the hub firmware: a Rust engine with a SwiftUI window for macOS and a WinUI 3 window for Windows. Read its README first |
+| `cadual4kdockpd-patch/` | App and command-line tool that applies the Try.SRC change to a dock of this exact model and, on macOS, can install the hub firmware: a Rust engine with a SwiftUI window for macOS and a Win32 window for Windows. Read its README first |
 
 ## Downloads
 

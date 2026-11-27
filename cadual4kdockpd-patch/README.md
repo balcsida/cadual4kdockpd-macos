@@ -40,14 +40,14 @@ There are three parts:
 |---|---|---|
 | Engine and command-line tool | `src/` (Rust) | Everything that touches the dock, and the step-by-step flow. `cadual4kdockpd-patch serve` is how a window drives it: commands in, JSON lines out (`src/serve.rs`) |
 | macOS app | `macos/` (SwiftUI) | The window on a Mac. Draws the engine's state; contains no dock code |
-| Windows app | `windows/` (WinUI 3, C#) | The same window on Windows |
+| Windows app | `src/window.rs` (Win32, Rust) | The same window on Windows, built into the engine's own exe (`--features window`) |
 
 The window leads through five numbered steps: connect the dock, identify it (read only), apply the fix,
 restart the dock, test it. The engine watches for the dock, so the window knows when the dock is
 connected, unplugged and back. Before anything is written the window shows what will happen and asks
 you to type `ERASE`; the engine checks that word again. The log is a box of its own at the bottom. The
-hub update and restoring the original firmware are out of the flow, in the "Dock" menu: windows of their
-own on a Mac, dialogs on Windows. The app cannot be closed while a write is running.
+hub update and restoring the original firmware are out of the flow, in windows of their own opened from
+the "Dock" menu. The app cannot be closed while a write is running.
 
 The same from a terminal:
 
@@ -123,21 +123,22 @@ DOCK_UPDATER=/path/to/DUD15X0D1_Update_E108.exe cargo test -- --ignored   # imag
   `.github/workflows/macos-app.yml` at the top of the repository does the same on GitHub, starts the app
   as a test and keeps it, zipped, as the artifact of the run. Publishing a release there attaches that
   zip to it as `CADUAL4KDOCKPD-Patch-macos.zip`.
-- **Windows app:** one exe. WinUI 3 can only be built on Windows; there, with the .NET 10 SDK and Rust:
+- **Windows app:** one exe, built on Windows with Rust:
 
   ```sh
-  cargo build --release
-  dotnet publish windows -c Release -o app
+  cargo build --release --features window
   ```
 
-  `app\CADUAL4KDOCKPD-Patch-App.exe` is the whole app: the window, the engine and the parts of .NET and of
-  the Windows App SDK it uses (about 34 MB; 64-bit Windows 10 1809 or later, nothing to install). At its first start it unpacks
-  itself into the user's temp folder (`%TEMP%\.net`), which takes a few seconds. The engine must be built
-  first, because the publish step packs it in. `.github/workflows/windows-app.yml` at the top of the
-  repository does the same on GitHub, starts the exe as a test and keeps it as the artifact of the run.
-  Publishing a release there attaches that exe to it.
-- **Windows engine from a Mac:** `cargo build --release --target x86_64-pc-windows-gnu` (needs `mingw-w64`)
-  gives `cadual4kdockpd-patch.exe`, the command-line tool on its own.
+  `target\release\cadual4kdockpd-patch.exe` is the whole app, about 1 MB: started without arguments it
+  opens the window (plain Win32 controls) and runs itself a second time as the engine, `serve`. It needs
+  nothing installed on 64-bit Windows 10 or 11 and can be renamed. The feature makes it a GUI program, so
+  for the command line use the build without it. `.github/workflows/windows-app.yml` at the top of the
+  repository builds it on GitHub as `CADUAL4KDOCKPD-Patch-App.exe`, starts it as a test and keeps it as the
+  artifact of the run. Publishing a release there attaches that exe to it.
+- **Windows from a Mac:** `cargo build --release --target x86_64-pc-windows-gnu` (needs `mingw-w64`)
+  gives `cadual4kdockpd-patch.exe`, the command-line tool on its own. With `--features window` it is the
+  app, but without its manifest (only the MSVC linker embeds it): old-style controls and blurry text on
+  scaled screens, so use it only to try a change.
 
 The engine looks for the image next to the program (or next to the `.app`), in the working folder and in
 Downloads: first `tps65982-image-1.38.6.bin`, a file holding only the power controller image, then
