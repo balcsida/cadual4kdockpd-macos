@@ -1,6 +1,6 @@
 // The window: a guided flow for the Mac loop fix, one step at a time, drawn from the engine's state.
-// Optional and rarely needed actions sit in collapsed sections below the steps. Every write is
-// confirmed here by typing a word; the engine checks the word again before it starts.
+// Optional and rarely needed actions sit in their own windows, opened from the "Dock" menu. Every
+// write is confirmed here by typing a word; the engine checks the word again before it starts.
 
 import SwiftUI
 
@@ -17,13 +17,8 @@ struct FlowView: View {
 
     /// The word typed for the main step's write.
     @State private var typed = ""
-    /// A write from one of the sections, waiting for its typed word.
-    @State private var pending: Job?
-    @State private var pendingTyped = ""
-    @State private var imagePath = ""
-    @State private var showHubs = false
-    @State private var showMore = false
     @State private var showLog = false
+    @Environment(\.openWindow) private var openWindow
 
     private var state: DockState { engine.state }
     private var idle: Bool { state.running == nil }
@@ -50,11 +45,9 @@ struct FlowView: View {
                 StepRow(step: .patch, current: state.step, title: "Apply the fix",
                         summary: state.alreadyPatched ? "Not needed: the fix is already in this dock." : "Written and verified.") { patchStep }
                 StepRow(step: .restart, current: state.step, title: "Restart the dock", summary: state.alreadyPatched ? "Not needed." : "Restarted.") { restartStep }
-                StepRow(step: .test, current: state.step, title: "Test it", summary: "") { testStep }
+                StepRow(step: .test, current: state.step, title: "Test it", summary: "", done: testPassed) { testStep }
 
                 Divider()
-                Collapsible(title: "Hub firmware 93.92 (optional)", isExpanded: $showHubs) { hubSection }
-                Collapsible(title: "More options", isExpanded: $showMore) { moreSection }
                 Collapsible(title: "Details", isExpanded: $showLog) { logSection }
             }
             .frame(maxWidth: 700, alignment: .leading)
@@ -66,18 +59,23 @@ struct FlowView: View {
         .onChange(of: engine.writing) { _, writing in
             for window in NSApp.windows { window.standardWindowButton(.closeButton)?.isEnabled = !writing }
         }
-        // a build without the firmware inside: the image file is chosen under "More options"
+        // a build without the firmware inside: the image file is chosen in the "More options" window
         .onChange(of: state.imageError, initial: true) { _, missing in
-            if missing != nil { showMore = true }
+            if missing != nil { openWindow(id: moreWindow) }
         }
         #if DEBUG
         .onAppear {
             if ProcessInfo.processInfo.environment["DOCK_UI_OPEN"] != nil {
-                (showHubs, showMore, showLog, pending) = (true, true, true, .hubUpdate)
+                showLog = true
+                openWindow(id: hubsWindow)
+                openWindow(id: moreWindow)
             }
         }
         #endif
     }
+
+    /// Three plug-ins without a loop: the last step has done what it is there for.
+    private var testPassed: Bool { state.step == .test && state.reconnects >= 3 }
 
     // MARK: The five steps
 
@@ -160,83 +158,142 @@ struct FlowView: View {
         }
     }
 
-    // MARK: The sections below the steps
-
-    @ViewBuilder private var hubSection: some View {
-        Text("i-tec's update for the dock's two USB hubs. It does not affect the loop on Macs.")
-        if let missing = state.hubRomsError {
-            Callout(tone: .warning, title: "The hub firmware is missing") { Text(missing) }
-        }
-        HStack {
-            Button("Check the hubs") { engine.send("hub-check") }
-            Button("Update the hubs...") { (pending, pendingTyped) = (.hubUpdate, "") }
-        }
-        .disabled(!idle || state.hubRomsError != nil || pending != nil)
-        if pending == .hubUpdate {
-            Callout(tone: .warning, title: "This rewrites the firmware of the dock's two USB hubs") {
-                Bullets(lines: [
-                    "Keep the dock's power supply and the cable connected until the result appears.",
-                    "Each hub restarts at the end, so everything plugged into the dock disconnects for a few seconds.",
-                    "This tool's hub update has been done on very few docks.",
-                ])
-            }
-            ConfirmRow(word: "UPDATE", action: "Update the hubs", typed: $pendingTyped, enabled: idle, go: { start("hub-update") }, cancel: { pending = nil })
-        }
-        if state.running == .hubCheck || state.running == .hubUpdate {
-            ProgressLine(progress: engine.progress)
-        }
-        NoteView(note: state.hubNote)
-    }
-
-    @ViewBuilder private var moreSection: some View {
-        Text("Writes the dock's original firmware back, with Try.SRC on again.")
-        Button("Restore the original firmware...") { (pending, pendingTyped) = (.restore, "") }
-            .disabled(!idle || state.imageError != nil || pending != nil)
-        if pending == .restore {
-            Callout(tone: .warning, title: "This erases the dock's power controller and writes the original firmware") {
-                Bullets(lines: [
-                    "The dock's power supply must stay connected until this says verified.",
-                    "Restart the dock afterwards: cable out, power off for 15 seconds, power on, cable in.",
-                ])
-            }
-            ConfirmRow(word: "ERASE", action: "Restore the original", typed: $pendingTyped, enabled: idle, go: { start("restore") }, cancel: { pending = nil })
-        }
-        if state.running == .restore {
-            ProgressLine(progress: engine.progress)
-        }
-        NoteView(note: state.restoreNote)
-        Toggle("An earlier write was not verified: skip the content check next time",
-               isOn: Binding(get: { state.afterFailedWrite }, set: { engine.send("skip-check \($0 ? "on" : "off")") }))
-            .disabled(!idle)
-        if let missing = state.imageError {
-            Callout(tone: .warning, title: "The firmware image is missing") {
-                Text(missing)
-                Text("The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Give that file's path:")
-            }
-            HStack {
-                TextField("Path of the file", text: $imagePath)
-                    .textFieldStyle(.roundedBorder)
-                Button("Use this file") { engine.send("image \(imagePath.trimmingCharacters(in: .whitespaces))") }
-                    .disabled(imagePath.trimmingCharacters(in: .whitespaces).isEmpty || !idle)
-            }
-        }
-    }
+    // MARK: The log below the steps
 
     @ViewBuilder private var logSection: some View {
         if engine.log.isEmpty {
             Text("Nothing has been done yet.").foregroundStyle(.secondary)
         } else {
-            Text(engine.log.joined(separator: "\n"))
-                .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
+            // a box of its own: a new line scrolls in here instead of moving the steps above it
+            ScrollView {
+                Text(engine.log.joined(separator: "\n"))
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+            }
+            .defaultScrollAnchor(.bottom)
+            .frame(height: 240)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
+        }
+    }
+}
+
+// MARK: The windows the "Dock" menu opens
+
+/// i-tec's hub firmware: optional, and nothing to do with the loop the flow fixes.
+struct HubView: View {
+    let engine: Engine
+
+    @State private var typed = ""
+    @State private var confirming = false
+
+    private var state: DockState { engine.state }
+    private var idle: Bool { state.running == nil }
+
+    var body: some View {
+        Panel {
+            Text("i-tec's update for the dock's two USB hubs. It does not affect the loop on Macs.")
+            if let missing = state.hubRomsError {
+                Callout(tone: .warning, title: "The hub firmware is missing") { Text(missing) }
+            }
+            HStack {
+                Button("Check the hubs") { engine.send("hub-check") }
+                Button("Update the hubs...") { (confirming, typed) = (true, "") }
+            }
+            .disabled(!idle || state.hubRomsError != nil || confirming)
+            if confirming {
+                Callout(tone: .warning, title: "This rewrites the firmware of the dock's two USB hubs") {
+                    Bullets(lines: [
+                        "Keep the dock's power supply and the cable connected until the result appears.",
+                        "Each hub restarts at the end, so everything plugged into the dock disconnects for a few seconds.",
+                        "This tool's hub update has been done on very few docks.",
+                    ])
+                }
+                ConfirmRow(word: "UPDATE", action: "Update the hubs", typed: $typed, enabled: idle,
+                           go: { send("hub-update") }, cancel: { confirming = false })
+            }
+            if state.running == .hubCheck || state.running == .hubUpdate {
+                ProgressLine(progress: engine.progress)
+            }
+            NoteView(note: state.hubNote)
         }
     }
 
-    /// Starts the write that was waiting for its typed word.
-    private func start(_ command: String) {
-        engine.send("\(command) \(pendingTyped.trimmingCharacters(in: .whitespaces))")
-        (pending, pendingTyped) = (nil, "")
+    private func send(_ command: String) {
+        engine.send("\(command) \(typed.trimmingCharacters(in: .whitespaces))")
+        (confirming, typed) = (false, "")
+    }
+}
+
+/// What is rarely needed: the way back to the original firmware, and the firmware image itself.
+struct MoreView: View {
+    let engine: Engine
+
+    @State private var typed = ""
+    @State private var confirming = false
+    @State private var imagePath = ""
+
+    private var state: DockState { engine.state }
+    private var idle: Bool { state.running == nil }
+
+    var body: some View {
+        Panel {
+            Text("Writes the dock's original firmware back, with Try.SRC on again.")
+            Button("Restore the original firmware...") { (confirming, typed) = (true, "") }
+                .disabled(!idle || state.imageError != nil || confirming)
+            if confirming {
+                Callout(tone: .warning, title: "This erases the dock's power controller and writes the original firmware") {
+                    Bullets(lines: [
+                        "The dock's power supply must stay connected until this says verified.",
+                        "Restart the dock afterwards: cable out, power off for 15 seconds, power on, cable in.",
+                    ])
+                }
+                ConfirmRow(word: "ERASE", action: "Restore the original", typed: $typed, enabled: idle,
+                           go: { send("restore") }, cancel: { confirming = false })
+            }
+            if state.running == .restore {
+                ProgressLine(progress: engine.progress)
+            }
+            NoteView(note: state.restoreNote)
+            Toggle("An earlier write was not verified: skip the content check next time",
+                   isOn: Binding(get: { state.afterFailedWrite }, set: { engine.send("skip-check \($0 ? "on" : "off")") }))
+                .disabled(!idle)
+            if let missing = state.imageError {
+                Callout(tone: .warning, title: "The firmware image is missing") {
+                    Text(missing)
+                    Text("The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Give that file's path:")
+                }
+                HStack {
+                    TextField("Path of the file", text: $imagePath)
+                        .textFieldStyle(.roundedBorder)
+                    Button("Use this file") { engine.send("image \(imagePath.trimmingCharacters(in: .whitespaces))") }
+                        .disabled(imagePath.trimmingCharacters(in: .whitespaces).isEmpty || !idle)
+                }
+            }
+        }
+    }
+
+    private func send(_ command: String) {
+        engine.send("\(command) \(typed.trimmingCharacters(in: .whitespaces))")
+        (confirming, typed) = (false, "")
+    }
+}
+
+/// The frame of a window opened from the "Dock" menu.
+private struct Panel<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) { content }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(20)
+        }
+        .controlSize(.large)
+        .frame(minWidth: 460, minHeight: 240)
     }
 }
 
@@ -248,7 +305,11 @@ private struct StepRow<Content: View>: View {
     let current: Step
     let title: String
     let summary: String
+    /// The last step has no step after it, so it says itself when it is done.
+    var done = false
     @ViewBuilder var content: Content
+
+    private var isDone: Bool { current > step || done }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -259,7 +320,7 @@ private struct StepRow<Content: View>: View {
                     .foregroundStyle(current < step ? .secondary : .primary)
                     .frame(minHeight: 28)
                     .accessibilityAddTraits(.isHeader)
-                    .accessibilityLabel("Step \(step.number), \(title), \(current > step ? "done" : current == step ? "current step" : "not started")")
+                    .accessibilityLabel("Step \(step.number), \(title), \(isDone ? "done" : current == step ? "current step" : "not started")")
                 if current == step {
                     content
                 } else if current > step, !summary.isEmpty {
@@ -271,7 +332,7 @@ private struct StepRow<Content: View>: View {
 
     /// The step's number in a circle: a tick when done, filled when current.
     @ViewBuilder private var badge: some View {
-        if current > step {
+        if isDone {
             Image(systemName: "checkmark").font(.system(size: 13, weight: .bold)).foregroundStyle(.white)
                 .frame(maxWidth: .infinity, maxHeight: .infinity).background(doneGreen, in: Circle())
                 .accessibilityHidden(true)

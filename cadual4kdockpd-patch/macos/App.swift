@@ -2,6 +2,9 @@ import SwiftUI
 
 let engine = Engine()
 
+/// The windows the "Dock" menu opens. They are out of the flow: optional, or rarely needed.
+let hubsWindow = "hubs", moreWindow = "more"
+
 @main struct PatchApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
@@ -11,6 +14,26 @@ let engine = Engine()
                 .frame(minWidth: 560, minHeight: 520)
         }
         .defaultSize(width: 720, height: 780)
+        .commands { DockCommands() }
+
+        // .commandsRemoved: the Dock menu opens these, so they add no items of their own
+        Window("Hub firmware 93.92", id: hubsWindow) { HubView(engine: engine) }
+            .defaultSize(width: 520, height: 360)
+            .commandsRemoved()
+        Window("More options", id: moreWindow) { MoreView(engine: engine) }
+            .defaultSize(width: 560, height: 420)
+            .commandsRemoved()
+    }
+}
+
+private struct DockCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandMenu("Dock") {
+            Button("Hub firmware 93.92...") { openWindow(id: hubsWindow) }
+            Button("More options...") { openWindow(id: moreWindow) }
+        }
     }
 }
 
@@ -34,7 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     #if DEBUG
-    /// Development only: `DOCK_UI_SHOT=<file.png>` saves a picture of the window and quits;
+    /// Development only: `DOCK_UI_SHOT=<file.png>` saves a picture of every open window and quits,
+    /// the main one as the given file and the ones from the Dock menu as `<file>-2.png` and so on;
     /// `DOCK_UI_DARK=1` uses the dark appearance. See also `DOCK_UI_DEMO` in Engine.swift.
     private func saveScreenshotIfAsked() {
         let environment = ProcessInfo.processInfo.environment
@@ -42,11 +66,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.appearance = NSAppearance(named: environment["DOCK_UI_DARK"] == nil ? .aqua : .darkAqua)
         Task {
             try? await Task.sleep(for: .seconds(1))
-            NSApp.windows.first?.setContentSize(NSSize(width: 720, height: 1040))
+            let windows = NSApp.windows.filter(\.isVisible)
+            windows.first?.setContentSize(NSSize(width: 720, height: 1040))
             try? await Task.sleep(for: .seconds(1))
-            if let view = NSApp.windows.first?.contentView, let picture = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            for (index, window) in windows.enumerated() {
+                guard let view = window.contentView, let picture = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
                 view.cacheDisplay(in: view.bounds, to: picture)
-                try? picture.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: file))
+                let name = index == 0 ? file : file.replacingOccurrences(of: ".png", with: "-\(index + 1).png")
+                try? picture.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: name))
             }
             exit(0)
         }

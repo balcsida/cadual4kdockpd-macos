@@ -1,5 +1,6 @@
 <!-- The window: a guided flow for the Mac loop fix, one step at a time, drawn from the engine's state
-     (MainWindow.xaml.cs shows and hides the parts). Every write is confirmed here by typing a word. -->
+     (MainWindow.xaml.cs shows and hides the parts). Optional and rarely needed actions are dialogs,
+     opened from the "Dock" menu. Every write is confirmed here by typing a word. -->
 <Window
     x:Class="DockPatch.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -9,200 +10,221 @@
         <MicaBackdrop />
     </Window.SystemBackdrop>
 
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="780" HorizontalAlignment="Left" Padding="28" Spacing="18">
-            <StackPanel Spacing="4">
-                <TextBlock Text="Fix the dock's connect and disconnect loop" Style="{StaticResource TitleTextBlockStyle}" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level1" />
-                <TextBlock Text="For the i-tec CADUAL4KDOCKPD's loop on Macs. Five steps, about 15 minutes." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-            </StackPanel>
-            <InfoBar x:Name="StoppedBar" Severity="Error" IsClosable="False" Title="This app cannot talk to the dock" />
-            <InfoBar x:Name="CloseRefusedBar" Severity="Warning" IsClosable="False" Title="The app stays open until the dock has been written and checked" />
+    <Grid x:Name="Root">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <MenuBar>
+            <MenuBarItem Title="Dock">
+                <MenuFlyoutItem Text="Hub firmware 93.92..." Click="Hubs_Click" />
+                <MenuFlyoutItem Text="More options..." Click="More_Click" />
+            </MenuBarItem>
+        </MenuBar>
 
-            <!-- 1 -->
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid x:Name="Badge1" Width="28" Height="28" VerticalAlignment="Top" />
-                <StackPanel Grid.Column="1" Spacing="10">
-                    <TextBlock x:Name="Title1" Text="Connect the dock" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
-                    <TextBlock x:Name="Summary1" Text="Dock connected." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <StackPanel x:Name="Body1" Spacing="10">
-                        <TextBlock Text="Plug in the dock's power supply, then connect the dock to this computer." TextWrapping="Wrap" />
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <ProgressRing IsActive="True" Width="20" Height="20" />
-                            <TextBlock Text="Looking for the dock..." VerticalAlignment="Center" />
-                        </StackPanel>
-                        <TextBlock Text="If the dock does not show up within 10 seconds, unplug the cable, wait 3 seconds and plug it in again." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    </StackPanel>
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel MaxWidth="780" HorizontalAlignment="Left" Padding="28" Spacing="18">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="Fix the dock's connect and disconnect loop" Style="{StaticResource TitleTextBlockStyle}" TextWrapping="Wrap" AutomationProperties.HeadingLevel="Level1" />
+                    <TextBlock Text="For the i-tec CADUAL4KDOCKPD's loop on Macs. Five steps, about 15 minutes." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                 </StackPanel>
-            </Grid>
+                <InfoBar x:Name="StoppedBar" Severity="Error" IsClosable="False" Title="This app cannot talk to the dock" />
+                <InfoBar x:Name="CloseRefusedBar" Severity="Warning" IsClosable="False" Title="The app stays open until the dock has been written and checked" />
 
-            <!-- 2 -->
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid x:Name="Badge2" Width="28" Height="28" VerticalAlignment="Top" />
-                <StackPanel Grid.Column="1" Spacing="10">
-                    <TextBlock x:Name="Title2" Text="Identify the dock" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
-                    <TextBlock x:Name="Summary2" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <StackPanel x:Name="Body2" Spacing="10">
-                        <TextBlock Text="A quick look at the dock. It only reads and takes a few seconds." TextWrapping="Wrap" />
-                        <Button x:Name="IdentifyButton" Content="Identify the dock" Style="{StaticResource AccentButtonStyle}" Click="Identify_Click" />
-                        <StackPanel x:Name="IdentifyBusy" Orientation="Horizontal" Spacing="10">
-                            <ProgressRing IsActive="True" Width="20" Height="20" />
-                            <TextBlock Text="Reading the dock..." VerticalAlignment="Center" />
-                        </StackPanel>
-                        <InfoBar x:Name="IdentifyNote" IsClosable="False" />
-                    </StackPanel>
-                </StackPanel>
-            </Grid>
-
-            <!-- 3 -->
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid x:Name="Badge3" Width="28" Height="28" VerticalAlignment="Top" />
-                <StackPanel Grid.Column="1" Spacing="10">
-                    <TextBlock x:Name="Title3" Text="Apply the fix" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
-                    <TextBlock x:Name="Summary3" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <StackPanel x:Name="Body3" Spacing="10">
-                        <StackPanel x:Name="PatchWriting" Spacing="10">
-                            <InfoBar IsOpen="True" IsClosable="False" Severity="Warning"
-                                     Title="Keep the dock's power supply and the cable connected"
-                                     Message="The dock is being checked, erased, written and checked again. This takes about 8 minutes." />
-                            <TextBlock x:Name="PatchProgressText" />
-                            <ProgressBar x:Name="PatchProgressBar" Maximum="100" />
-                        </StackPanel>
-                        <StackPanel x:Name="PatchFailed" Spacing="10">
-                            <InfoBar IsOpen="True" IsClosable="False" Severity="Error"
-                                     Title="The write could not be verified. Do not unplug the dock's power supply."
-                                     Message="The dock keeps working as long as it stays powered. Write again now." />
-                            <Button x:Name="WriteAgainButton" Content="Write again" Style="{StaticResource AccentButtonStyle}" Click="WriteAgain_Click" />
-                        </StackPanel>
-                        <InfoBar x:Name="PatchMissing" IsClosable="False" Severity="Error" Title="The firmware image is missing" />
-                        <StackPanel x:Name="PatchConfirm" Spacing="10">
-                            <InfoBar IsOpen="True" IsClosable="False" Severity="Warning"
-                                     Title="This switches the setting &quot;Try.SRC&quot; off. It erases the dock's power controller and writes new firmware.">
-                                <InfoBar.Content>
-                                    <StackPanel Spacing="6" Margin="0,0,12,14">
-                                        <TextBlock TextWrapping="Wrap" Text="&#x2022;  It takes about 8 minutes. Nothing is erased unless the dock holds exactly the expected firmware." />
-                                        <TextBlock TextWrapping="Wrap" Text="&#x2022;  The dock's power supply must stay connected until this says verified. If the dock loses power in between, it will not start again." />
-                                        <TextBlock TextWrapping="Wrap" Text="&#x2022;  Leave the cable in. This app cannot be closed while it runs." />
-                                    </StackPanel>
-                                </InfoBar.Content>
-                            </InfoBar>
+                <!-- 1 -->
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid x:Name="Badge1" Width="28" Height="28" VerticalAlignment="Top" />
+                    <StackPanel Grid.Column="1" Spacing="10">
+                        <TextBlock x:Name="Title1" Text="Connect the dock" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
+                        <TextBlock x:Name="Summary1" Text="Dock connected." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <StackPanel x:Name="Body1" Spacing="10">
+                            <TextBlock Text="Plug in the dock's power supply, then connect the dock to this computer." TextWrapping="Wrap" />
                             <StackPanel Orientation="Horizontal" Spacing="10">
-                                <TextBlock Text="Type ERASE to confirm:" VerticalAlignment="Center" />
-                                <TextBox x:Name="PatchWord" Width="130" IsSpellCheckEnabled="False" TextChanged="Text_Changed" AutomationProperties.Name="Type ERASE to confirm" />
-                                <Button x:Name="PatchButton" Content="Apply the fix" Style="{StaticResource AccentButtonStyle}" Click="Patch_Click" />
+                                <ProgressRing IsActive="True" Width="20" Height="20" />
+                                <TextBlock Text="Looking for the dock..." VerticalAlignment="Center" />
                             </StackPanel>
-                            <InfoBar x:Name="PatchNote" IsClosable="False" />
+                            <TextBlock Text="If the dock does not show up within 10 seconds, unplug the cable, wait 3 seconds and plug it in again." Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                         </StackPanel>
                     </StackPanel>
-                </StackPanel>
-            </Grid>
+                </Grid>
 
-            <!-- 4 -->
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid x:Name="Badge4" Width="28" Height="28" VerticalAlignment="Top" />
-                <StackPanel Grid.Column="1" Spacing="10">
-                    <TextBlock x:Name="Title4" Text="Restart the dock" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
-                    <TextBlock x:Name="Summary4" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                    <StackPanel x:Name="Body4" Spacing="10">
-                        <InfoBar IsOpen="True" IsClosable="False" Severity="Success" Title="Written and verified" Message="The dock uses the new setting once it has been restarted." />
-                        <StackPanel Spacing="6">
-                            <TextBlock x:Name="UnplugLine" TextWrapping="Wrap" />
-                            <TextBlock Text="2.  Unplug the dock's power supply and wait 15 seconds." TextWrapping="Wrap" />
-                            <TextBlock Text="3.  Plug the power supply back in, then the cable." TextWrapping="Wrap" />
+                <!-- 2 -->
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid x:Name="Badge2" Width="28" Height="28" VerticalAlignment="Top" />
+                    <StackPanel Grid.Column="1" Spacing="10">
+                        <TextBlock x:Name="Title2" Text="Identify the dock" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
+                        <TextBlock x:Name="Summary2" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <StackPanel x:Name="Body2" Spacing="10">
+                            <TextBlock Text="A quick look at the dock. It only reads and takes a few seconds." TextWrapping="Wrap" />
+                            <Button x:Name="IdentifyButton" Content="Identify the dock" Style="{StaticResource AccentButtonStyle}" Click="Identify_Click" />
+                            <StackPanel x:Name="IdentifyBusy" Orientation="Horizontal" Spacing="10">
+                                <ProgressRing IsActive="True" Width="20" Height="20" />
+                                <TextBlock Text="Reading the dock..." VerticalAlignment="Center" />
+                            </StackPanel>
+                            <InfoBar x:Name="IdentifyNote" IsClosable="False" />
                         </StackPanel>
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <ProgressRing IsActive="True" Width="20" Height="20" />
-                            <TextBlock x:Name="RestartWaiting" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <Button Content="I have restarted it" Click="Restarted_Click" />
                     </StackPanel>
-                </StackPanel>
-            </Grid>
+                </Grid>
 
-            <!-- 5 -->
-            <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Grid x:Name="Badge5" Width="28" Height="28" VerticalAlignment="Top" />
-                <StackPanel Grid.Column="1" Spacing="10">
-                    <TextBlock x:Name="Title5" Text="Test it" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
-                    <StackPanel x:Name="Body5" Spacing="10">
-                        <TextBlock Text="The loop only shows on a Mac: plug the dock into the Mac, where every plug-in should now bring it up within about 2 seconds. On this PC, unplug and replug the cable a few times to see that the dock still connects." TextWrapping="Wrap" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <FontIcon x:Name="PresentIcon" Glyph="&#xE73E;" FontSize="16" />
-                            <TextBlock x:Name="PresentText" FontWeight="SemiBold" VerticalAlignment="Center" />
-                        </StackPanel>
-                        <InfoBar x:Name="TestDone" IsClosable="False" Severity="Success" Message="The dock connects as before. You can close this window and test it on the Mac." />
-                        <TextBlock x:Name="TestCount" TextWrapping="Wrap" />
-                    </StackPanel>
-                </StackPanel>
-            </Grid>
-
-            <Expander Header="Hub firmware 93.92 (optional)" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                <TextBlock TextWrapping="Wrap" Text="i-tec's update for the dock's two USB hubs does not affect the loop on Macs. On Windows, use i-tec's own program for it, CADUAL4KDOCKPD_9392.exe: Windows needs the driver that program installs to reach a hub. Run it with the dock powered and nothing plugged into the dock, press Update FW, then restart the dock." />
-            </Expander>
-
-            <Expander x:Name="MoreExpander" Header="More options" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                <StackPanel Spacing="10">
-                    <TextBlock Text="Writes the dock's original firmware back, with Try.SRC on again." TextWrapping="Wrap" />
-                    <Button x:Name="RestoreButton" Content="Restore the original firmware..." Click="RestoreAsk_Click" />
-                    <StackPanel x:Name="RestoreConfirm" Spacing="10">
-                        <InfoBar IsOpen="True" IsClosable="False" Severity="Warning" Title="This erases the dock's power controller and writes the original firmware">
-                            <InfoBar.Content>
-                                <StackPanel Spacing="6" Margin="0,0,12,14">
-                                    <TextBlock TextWrapping="Wrap" Text="&#x2022;  The dock's power supply must stay connected until this says verified." />
-                                    <TextBlock TextWrapping="Wrap" Text="&#x2022;  Restart the dock afterwards: cable out, power off for 15 seconds, power on, cable in." />
+                <!-- 3 -->
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid x:Name="Badge3" Width="28" Height="28" VerticalAlignment="Top" />
+                    <StackPanel Grid.Column="1" Spacing="10">
+                        <TextBlock x:Name="Title3" Text="Apply the fix" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
+                        <TextBlock x:Name="Summary3" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <StackPanel x:Name="Body3" Spacing="10">
+                            <StackPanel x:Name="PatchWriting" Spacing="10">
+                                <InfoBar IsOpen="True" IsClosable="False" Severity="Warning"
+                                         Title="Keep the dock's power supply and the cable connected"
+                                         Message="The dock is being checked, erased, written and checked again. This takes about 8 minutes." />
+                                <TextBlock x:Name="PatchProgressText" />
+                                <ProgressBar x:Name="PatchProgressBar" Maximum="100" />
+                            </StackPanel>
+                            <StackPanel x:Name="PatchFailed" Spacing="10">
+                                <InfoBar IsOpen="True" IsClosable="False" Severity="Error"
+                                         Title="The write could not be verified. Do not unplug the dock's power supply."
+                                         Message="The dock keeps working as long as it stays powered. Write again now." />
+                                <Button x:Name="WriteAgainButton" Content="Write again" Style="{StaticResource AccentButtonStyle}" Click="WriteAgain_Click" />
+                            </StackPanel>
+                            <InfoBar x:Name="PatchMissing" IsClosable="False" Severity="Error" Title="The firmware image is missing" />
+                            <StackPanel x:Name="PatchConfirm" Spacing="10">
+                                <InfoBar IsOpen="True" IsClosable="False" Severity="Warning"
+                                         Title="This switches the setting &quot;Try.SRC&quot; off. It erases the dock's power controller and writes new firmware.">
+                                    <InfoBar.Content>
+                                        <StackPanel Spacing="6" Margin="0,0,12,14">
+                                            <TextBlock TextWrapping="Wrap" Text="&#x2022;  It takes about 8 minutes. Nothing is erased unless the dock holds exactly the expected firmware." />
+                                            <TextBlock TextWrapping="Wrap" Text="&#x2022;  The dock's power supply must stay connected until this says verified. If the dock loses power in between, it will not start again." />
+                                            <TextBlock TextWrapping="Wrap" Text="&#x2022;  Leave the cable in. This app cannot be closed while it runs." />
+                                        </StackPanel>
+                                    </InfoBar.Content>
+                                </InfoBar>
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <TextBlock Text="Type ERASE to confirm:" VerticalAlignment="Center" />
+                                    <TextBox x:Name="PatchWord" Width="130" IsSpellCheckEnabled="False" TextChanged="Text_Changed" AutomationProperties.Name="Type ERASE to confirm" />
+                                    <Button x:Name="PatchButton" Content="Apply the fix" Style="{StaticResource AccentButtonStyle}" Click="Patch_Click" />
                                 </StackPanel>
-                            </InfoBar.Content>
-                        </InfoBar>
-                        <StackPanel Orientation="Horizontal" Spacing="10">
-                            <TextBlock Text="Type ERASE to confirm:" VerticalAlignment="Center" />
-                            <TextBox x:Name="RestoreWord" Width="130" IsSpellCheckEnabled="False" TextChanged="Text_Changed" AutomationProperties.Name="Type ERASE to confirm" />
-                            <Button x:Name="RestoreGo" Content="Restore the original" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click" />
-                            <Button Content="Cancel" Click="RestoreCancel_Click" />
+                                <InfoBar x:Name="PatchNote" IsClosable="False" />
+                            </StackPanel>
                         </StackPanel>
                     </StackPanel>
-                    <StackPanel x:Name="RestoreProgress" Spacing="6">
-                        <TextBlock x:Name="RestoreProgressText" />
-                        <ProgressBar x:Name="RestoreProgressBar" Maximum="100" />
+                </Grid>
+
+                <!-- 4 -->
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid x:Name="Badge4" Width="28" Height="28" VerticalAlignment="Top" />
+                    <StackPanel Grid.Column="1" Spacing="10">
+                        <TextBlock x:Name="Title4" Text="Restart the dock" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
+                        <TextBlock x:Name="Summary4" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+                        <StackPanel x:Name="Body4" Spacing="10">
+                            <InfoBar IsOpen="True" IsClosable="False" Severity="Success" Title="Written and verified" Message="The dock uses the new setting once it has been restarted." />
+                            <StackPanel Spacing="6">
+                                <TextBlock x:Name="UnplugLine" TextWrapping="Wrap" />
+                                <TextBlock Text="2.  Unplug the dock's power supply and wait 15 seconds." TextWrapping="Wrap" />
+                                <TextBlock Text="3.  Plug the power supply back in, then the cable." TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <ProgressRing IsActive="True" Width="20" Height="20" />
+                                <TextBlock x:Name="RestartWaiting" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <Button Content="I have restarted it" Click="Restarted_Click" />
+                        </StackPanel>
                     </StackPanel>
-                    <InfoBar x:Name="RestoreNote" IsClosable="False" />
-                    <CheckBox x:Name="SkipCheck" Content="An earlier write was not verified: skip the content check next time" Click="SkipCheck_Click" />
-                    <StackPanel x:Name="ImagePanel" Spacing="10">
-                        <InfoBar x:Name="ImageMissing" IsOpen="True" IsClosable="False" Severity="Warning" Title="The firmware image is missing" />
-                        <TextBlock TextWrapping="Wrap" Text="The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Give that file's path:" />
-                        <Grid ColumnSpacing="10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <TextBox x:Name="ImagePath" PlaceholderText="Path of the file" IsSpellCheckEnabled="False" TextChanged="Text_Changed" AutomationProperties.Name="Path of the firmware file" />
-                            <Button x:Name="UseImageButton" Grid.Column="1" Content="Use this file" Click="UseImage_Click" />
-                        </Grid>
+                </Grid>
+
+                <!-- 5 -->
+                <Grid ColumnSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid x:Name="Badge5" Width="28" Height="28" VerticalAlignment="Top" />
+                    <StackPanel Grid.Column="1" Spacing="10">
+                        <TextBlock x:Name="Title5" Text="Test it" FontSize="18" Margin="0,1,0,0" AutomationProperties.HeadingLevel="Level2" />
+                        <StackPanel x:Name="Body5" Spacing="10">
+                            <TextBlock Text="The loop only shows on a Mac: plug the dock into the Mac, where every plug-in should now bring it up within about 2 seconds. On this PC, unplug and replug the cable a few times to see that the dock still connects." TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon x:Name="PresentIcon" Glyph="&#xE73E;" FontSize="16" />
+                                <TextBlock x:Name="PresentText" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            </StackPanel>
+                            <InfoBar x:Name="TestDone" IsClosable="False" Severity="Success" Message="The dock connects as before. You can close this window and test it on the Mac." />
+                            <TextBlock x:Name="TestCount" TextWrapping="Wrap" />
+                        </StackPanel>
+                    </StackPanel>
+                </Grid>
+
+                <Expander Header="Details" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
+                    <!-- a box of its own: a new line scrolls in here instead of moving the steps above it -->
+                    <Border MaxHeight="240" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="{ThemeResource ControlCornerRadius}">
+                        <ScrollViewer x:Name="LogScroll" Padding="10,8">
+                            <TextBlock x:Name="LogText" FontFamily="Consolas" IsTextSelectionEnabled="True" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        </ScrollViewer>
+                    </Border>
+                </Expander>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- shown over the flow by ShowAsync, not where they are declared -->
+        <ContentDialog x:Name="HubsDialog" Title="Hub firmware 93.92" CloseButtonText="Close">
+            <TextBlock TextWrapping="Wrap" Text="i-tec's update for the dock's two USB hubs does not affect the loop on Macs. On Windows, use i-tec's own program for it, CADUAL4KDOCKPD_9392.exe: Windows needs the driver that program installs to reach a hub. Run it with the dock powered and nothing plugged into the dock, press Update FW, then restart the dock." />
+        </ContentDialog>
+        <ContentDialog x:Name="MoreDialog" Title="More options" CloseButtonText="Close">
+            <ContentDialog.Resources>
+                <x:Double x:Key="ContentDialogMaxWidth">720</x:Double>
+            </ContentDialog.Resources>
+            <StackPanel Spacing="10">
+                <TextBlock Text="Writes the dock's original firmware back, with Try.SRC on again." TextWrapping="Wrap" />
+                <Button x:Name="RestoreButton" Content="Restore the original firmware..." Click="RestoreAsk_Click" />
+                <StackPanel x:Name="RestoreConfirm" Spacing="10">
+                    <InfoBar IsOpen="True" IsClosable="False" Severity="Warning" Title="This erases the dock's power controller and writes the original firmware">
+                        <InfoBar.Content>
+                            <StackPanel Spacing="6" Margin="0,0,12,14">
+                                <TextBlock TextWrapping="Wrap" Text="&#x2022;  The dock's power supply must stay connected until this says verified." />
+                                <TextBlock TextWrapping="Wrap" Text="&#x2022;  Restart the dock afterwards: cable out, power off for 15 seconds, power on, cable in." />
+                            </StackPanel>
+                        </InfoBar.Content>
+                    </InfoBar>
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <TextBlock Text="Type ERASE to confirm:" VerticalAlignment="Center" />
+                        <TextBox x:Name="RestoreWord" Width="130" IsSpellCheckEnabled="False" TextChanged="Text_Changed" AutomationProperties.Name="Type ERASE to confirm" />
+                        <Button x:Name="RestoreGo" Content="Restore the original" Style="{StaticResource AccentButtonStyle}" Click="Restore_Click" />
+                        <Button Content="Cancel" Click="RestoreCancel_Click" />
                     </StackPanel>
                 </StackPanel>
-            </Expander>
-
-            <Expander Header="Details" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch">
-                <TextBlock x:Name="LogText" FontFamily="Consolas" IsTextSelectionEnabled="True" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-            </Expander>
-        </StackPanel>
-    </ScrollViewer>
+                <StackPanel x:Name="RestoreProgress" Spacing="6">
+                    <TextBlock x:Name="RestoreProgressText" />
+                    <ProgressBar x:Name="RestoreProgressBar" Maximum="100" />
+                </StackPanel>
+                <InfoBar x:Name="RestoreNote" IsClosable="False" />
+                <CheckBox x:Name="SkipCheck" Content="An earlier write was not verified: skip the content check next time" Click="SkipCheck_Click" />
+                <StackPanel x:Name="ImagePanel" Spacing="10">
+                    <InfoBar x:Name="ImageMissing" IsOpen="True" IsClosable="False" Severity="Warning" Title="The firmware image is missing" />
+                    <TextBlock TextWrapping="Wrap" Text="The tool takes it from Cable Matters' updater, DUD15X0D1_Update_E108.exe. Give that file's path:" />
+                    <Grid ColumnSpacing="10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="ImagePath" PlaceholderText="Path of the file" IsSpellCheckEnabled="False" TextChanged="Text_Changed" AutomationProperties.Name="Path of the firmware file" />
+                        <Button x:Name="UseImageButton" Grid.Column="1" Content="Use this file" Click="UseImage_Click" />
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+        </ContentDialog>
+    </Grid>
 </Window>

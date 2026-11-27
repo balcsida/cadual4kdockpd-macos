@@ -43,8 +43,9 @@ There are three parts:
 The window leads through five numbered steps: connect the dock, identify it (read only), apply the fix,
 restart the dock, test it. The engine watches for the dock, so the window knows when the dock is
 connected, unplugged and back. Before anything is written the window shows what will happen and asks
-you to type `ERASE`; the engine checks that word again. The hub update, restoring the original firmware
-and the log are in collapsed sections at the bottom. The app cannot be closed while a write is running.
+you to type `ERASE`; the engine checks that word again. The log is a box of its own at the bottom. The
+hub update and restoring the original firmware are out of the flow, in the "Dock" menu: windows of their
+own on a Mac, dialogs on Windows. The app cannot be closed while a write is running.
 
 The same from a terminal:
 

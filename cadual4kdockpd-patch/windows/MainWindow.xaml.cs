@@ -23,10 +23,12 @@ public sealed partial class MainWindow : Window
     private static readonly Color Upcoming = ColorHelper.FromArgb(0xff, 0x80, 0x80, 0x80);
 
     private readonly Engine engine = new();
-    private int drawnStep;
+    private (int Step, bool Passed) drawn;
     private bool closeRefused;
     private bool restoreAsked;
     private bool moreOpened;
+    /// <summary>WinUI shows one dialog at a time; a second ShowAsync would throw.</summary>
+    private bool dialogOpen;
 
     public MainWindow()
     {
@@ -43,6 +45,12 @@ public sealed partial class MainWindow : Window
                 Render();
             }
         };
+        // the dialogs need the loaded window, which the engine's first report may come before
+        Root.Loaded += (_, _) => Render();
+        // the dialog holds the progress of a restore: it stays until the restore ends
+        MoreDialog.Closing += (_, e) => e.Cancel = engine.State.Running == "restore";
+        // a new line, or the box being opened, shows the newest lines; after layout, which sets the height
+        LogText.SizeChanged += (_, _) => DispatcherQueue.TryEnqueue(() => LogScroll.ChangeView(null, LogScroll.ScrollableHeight, null, true));
         engine.Changed += Render;
         Render();
         engine.Start(DispatcherQueue);
@@ -68,10 +76,12 @@ public sealed partial class MainWindow : Window
         TextBlock[] titles = [Title1, Title2, Title3, Title4, Title5];
         TextBlock?[] summaries = [Summary1, Summary2, Summary3, Summary4, null];
         StackPanel[] bodies = [Body1, Body2, Body3, Body4, Body5];
+        // the last step has no step after it, so three plug-ins without a loop mark it done
+        var passed = step == 5 && s.Reconnects >= 3;
         for (var i = 0; i < 5; i++)
         {
-            var (done, current) = (step > i + 1, step == i + 1);
-            if (drawnStep != step)
+            var (done, current) = (step > i + 1 || (i == 4 && passed), step == i + 1);
+            if (drawn != (step, passed))
             {
                 DrawBadge(badges[i], i + 1, done, current);
             }
@@ -84,7 +94,7 @@ public sealed partial class MainWindow : Window
                 Show(summary, done && summary.Text.Length > 0);
             }
         }
-        drawnStep = step;
+        drawn = (step, passed);
 
         // 2: identify
         Show(IdentifyBusy, s.Running == "identify");
@@ -131,11 +141,11 @@ public sealed partial class MainWindow : Window
         Show(ImagePanel, s.ImageError is not null);
         ImageMissing.Message = s.ImageError ?? "";
         UseImageButton.IsEnabled = idle && ImagePath.Text.Trim().Length > 0;
-        if (s.ImageError is not null && !moreOpened)
+        if (s.ImageError is not null && !moreOpened && Content.XamlRoot is not null)
         {
             // a build without the firmware inside: this is where its image file is chosen
-            MoreExpander.IsExpanded = true;
             moreOpened = true;
+            ShowDialog(MoreDialog);
         }
 
         LogText.Text = engine.Log.Count == 0 ? "Nothing has been done yet." : string.Join("\n", engine.Log);
@@ -202,6 +212,22 @@ public sealed partial class MainWindow : Window
         bar.Value = progress.Fraction * 100;
         text.Text = progress.Label.Length == 0 ? "Working..." : $"{progress.Label}: {Math.Round(progress.Fraction * 100)}%";
     }
+
+    private async void ShowDialog(ContentDialog dialog)
+    {
+        if (dialogOpen)
+        {
+            return;
+        }
+        dialogOpen = true;
+        dialog.XamlRoot = Content.XamlRoot;
+        await dialog.ShowAsync();
+        dialogOpen = false;
+    }
+
+    private void Hubs_Click(object sender, RoutedEventArgs e) => ShowDialog(HubsDialog);
+
+    private void More_Click(object sender, RoutedEventArgs e) => ShowDialog(MoreDialog);
 
     private void Identify_Click(object sender, RoutedEventArgs e) => engine.Send("identify");
 
