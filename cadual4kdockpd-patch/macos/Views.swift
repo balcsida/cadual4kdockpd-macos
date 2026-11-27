@@ -18,6 +18,8 @@ struct FlowView: View {
     /// The word typed for the main step's write.
     @State private var typed = ""
     @State private var showLog = false
+    /// The flow's own height: the window fits it.
+    @State private var flowHeight: CGFloat = 600
     @Environment(\.openWindow) private var openWindow
 
     private var state: DockState { engine.state }
@@ -40,20 +42,41 @@ struct FlowView: View {
                     Callout(tone: .warning, title: "The app stays open until the dock has been written and checked") {}
                 }
 
-                StepRow(step: .connect, current: state.step, title: "Connect the dock", summary: "Dock connected.") { connectStep }
-                StepRow(step: .identify, current: state.step, title: "Identify the dock", summary: state.identified?.text ?? "") { identifyStep }
-                StepRow(step: .patch, current: state.step, title: "Apply the fix",
-                        summary: state.alreadyPatched ? "Not needed: the fix is already in this dock." : "Written and verified.") { patchStep }
-                StepRow(step: .restart, current: state.step, title: "Restart the dock", summary: state.alreadyPatched ? "Not needed." : "Restarted.") { restartStep }
-                StepRow(step: .test, current: state.step, title: "Test it", summary: "", done: testPassed) { testStep }
+                // the steps down the left, the current one's contents on the right: wide rather than tall
+                HStack(alignment: .top, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        StepRow(step: .connect, current: state.step, summary: "Dock connected.")
+                        StepRow(step: .identify, current: state.step, summary: state.identified?.text ?? "")
+                        StepRow(step: .patch, current: state.step,
+                                summary: state.alreadyPatched ? "Not needed: the fix is already in this dock." : "Written and verified.")
+                        StepRow(step: .restart, current: state.step, summary: state.alreadyPatched ? "Not needed." : "Restarted.")
+                        StepRow(step: .test, current: state.step, summary: "", done: testPassed)
+                    }
+                    .frame(width: 230, alignment: .leading)
+                    Divider()
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(state.step.title)
+                            .font(.title2).fontWeight(.semibold)
+                            .accessibilityAddTraits(.isHeader)
+                        currentStep
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 Divider()
                 Collapsible(title: "Details", isExpanded: $showLog) { logSection }
             }
-            .frame(maxWidth: 700, alignment: .leading)
+            .frame(maxWidth: 1000, alignment: .leading)
             .padding(24)
             .frame(maxWidth: .infinity, alignment: .leading)
+            // measured here, inside the scroll view: a preference would not get out of it on macOS
+            .background(GeometryReader { flow in
+                Color.clear.onChange(of: flow.size.height, initial: true) { _, height in flowHeight = height }
+            })
         }
+        // as tall as the flow, so it scrolls only where the screen is too short for all of it
+        .frame(height: min(flowHeight, (NSScreen.main?.visibleFrame.height ?? 800) - 40))
+        .scrollBounceBehavior(.basedOnSize)
         .controlSize(.large)
         // closing the window would leave the user without the result of a write
         .onChange(of: engine.writing) { _, writing in
@@ -78,6 +101,16 @@ struct FlowView: View {
     private var testPassed: Bool { state.step == .test && state.reconnects >= 3 }
 
     // MARK: The five steps
+
+    @ViewBuilder private var currentStep: some View {
+        switch state.step {
+        case .connect: connectStep
+        case .identify: identifyStep
+        case .patch: patchStep
+        case .restart: restartStep
+        case .test: testStep
+        }
+    }
 
     @ViewBuilder private var connectStep: some View {
         Text("Plug in the dock's power supply, then connect the dock to this computer.")
@@ -174,6 +207,7 @@ struct FlowView: View {
                     .padding(8)
             }
             .defaultScrollAnchor(.bottom)
+            .scrollBounceBehavior(.basedOnSize)
             .frame(height: 240)
             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color(nsColor: .separatorColor)))
@@ -293,6 +327,7 @@ private struct Panel<Content: View>: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(20)
         }
+        .scrollBounceBehavior(.basedOnSize)
         .controlSize(.large)
         .frame(minWidth: 460, minHeight: 240)
     }
@@ -300,32 +335,40 @@ private struct Panel<Content: View>: View {
 
 // MARK: Building blocks
 
-/// One row of the flow: badge, title, and the step's contents while it is the current one.
-private struct StepRow<Content: View>: View {
+
+private extension Step {
+    var title: String {
+        switch self {
+        case .connect: "Connect the dock"
+        case .identify: "Identify the dock"
+        case .patch: "Apply the fix"
+        case .restart: "Restart the dock"
+        case .test: "Test it"
+        }
+    }
+}
+
+/// One step in the list down the left: badge, title, and once it is done what came of it.
+private struct StepRow: View {
     let step: Step
     let current: Step
-    let title: String
     let summary: String
     /// The last step has no step after it, so it says itself when it is done.
     var done = false
-    @ViewBuilder var content: Content
 
     private var isDone: Bool { current > step || done }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: 10) {
             badge.frame(width: 28, height: 28)
-            VStack(alignment: .leading, spacing: 10) {
-                Text(title)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(step.title)
                     .font(.title3).fontWeight(current == step ? .semibold : .regular)
                     .foregroundStyle(current < step ? .secondary : .primary)
                     .frame(minHeight: 28)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityLabel("Step \(step.number), \(title), \(isDone ? "done" : current == step ? "current step" : "not started")")
-                if current == step {
-                    content
-                } else if current > step, !summary.isEmpty {
-                    Text(summary).foregroundStyle(.secondary)
+                    .accessibilityLabel("Step \(step.number), \(step.title), \(isDone ? "done" : current == step ? "current step" : "not started")")
+                if current > step, !summary.isEmpty {
+                    Text(summary).font(.callout).foregroundStyle(.secondary)
                 }
             }
         }
