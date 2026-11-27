@@ -1059,7 +1059,7 @@ fn show_page(page: usize) {
         if !placed {
             let mut at = RECT { left: 0, top: 0, right: 0, bottom: 0 };
             GetWindowRect(main, &mut at);
-            let (width, height) = if page == HUBS { (520, 240) } else { (600, 560) };
+            let (width, height) = if page == HUBS { (520, 240) } else { (600, 440) };
             let offset = scale(48, dpi);
             SetWindowPos(hwnd, null_mut(), at.left + offset, at.top + offset, scale(width, dpi), scale(height, dpi), SWP_NOZORDER | SWP_NOACTIVATE);
         }
@@ -1302,6 +1302,21 @@ fn start_engine(window: HWND) -> Result<ChildStdin, String> {
     Ok(input)
 }
 
+/// Development only: `DOCK_UI_DEMO=<file>` shows a file of engine output instead of starting the
+/// engine, to see every step without a dock (`serve.rs` writes one file per step: see its demo test).
+#[cfg(debug_assertions)]
+fn demo(window: HWND) -> Option<()> {
+    let lines = std::fs::read_to_string(std::env::var_os("DOCK_UI_DEMO")?).ok()?;
+    crate::lock(&LINES).extend(lines.lines().map(|line| Some(line.to_string())));
+    unsafe { PostMessageW(window, WM_ENGINE, 0, 0) };
+    Some(())
+}
+
+#[cfg(not(debug_assertions))]
+fn demo(_: HWND) -> Option<()> {
+    None
+}
+
 fn start() -> Result<(), String> {
     unsafe {
         let controls = INITCOMMONCONTROLSEX { dwSize: size_of::<INITCOMMONCONTROLSEX>() as u32, dwICC: ICC_STANDARD_CLASSES | ICC_PROGRESS_CLASS };
@@ -1344,8 +1359,14 @@ fn start() -> Result<(), String> {
         let main_controls = build_main(&mut pages[MAIN]);
         let hub_text = label(&mut pages[HUBS], Face::Body);
         let more_controls = build_more(&mut pages[MORE]);
-        let engine = start_engine(main);
-        let model = Model { stopped: engine.as_ref().err().cloned(), ..Model::default() };
+        let (engine, stopped) = match demo(main) {
+            Some(()) => (None, None),
+            None => match start_engine(main) {
+                Ok(input) => (Some(input), None),
+                Err(why) => (None, Some(why)),
+            },
+        };
+        let model = Model { stopped, ..Model::default() };
         APP.with(|app| {
             *app.borrow_mut() = Some(App {
                 model,
@@ -1360,7 +1381,7 @@ fn start() -> Result<(), String> {
                 more_opened: false,
                 details: false,
                 log_shown: 0,
-                engine: engine.ok(),
+                engine,
             })
         });
         let dpi = GetDpiForWindow(main).max(96);

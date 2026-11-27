@@ -36,7 +36,7 @@ jobs:
         run: |
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
           $errorFile = Join-Path $env:TEMP 'CADUAL4KDOCKPD-Patch-error.txt'
-          function Test-Start($exe, $pictureFile) {
+          function Test-Start($exe, $pictureFile, $mainPictureFile) {
             $app = Start-Process -FilePath $exe -PassThru -RedirectStandardError app-stderr.txt -RedirectStandardOutput app-stdout.txt
             foreach ($second in 1..60) {
               Start-Sleep -Seconds 1
@@ -69,6 +69,18 @@ jobs:
               if (-not ($shown -like '*Looking for the dock*')) { $problem = "the window does not show step 1. It shows: $($shown -join ' | ')" }
               elseif (-not ($shown -like '*tps65982-image*')) { $problem = "the window does not show what the engine reports. It shows: $($shown -join ' | ')" }
             }
+            if (-not $problem -and $mainPictureFile) {
+              # "More options" opened over the flow; closing it only hides it, and shows the flow. It is
+              # owned by the main window, so UI Automation lists it below that window, not the desktop.
+              $more = $auto::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition($mine,
+                (New-Object System.Windows.Automation.PropertyCondition($auto::NameProperty, 'More options')))))
+              $more.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+              Start-Sleep -Seconds 2
+              [System.Drawing.Graphics]::FromImage($picture).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+              $picture.Save("$PWD\$mainPictureFile")
+              $app.Refresh()
+              if ($app.HasExited) { $problem = 'closing More options closed the app' }
+            }
             if (-not $app.HasExited) { Stop-Process -Id $app.Id -Force }
             Start-Sleep -Seconds 4
             if (-not $problem -and (Get-Process -Id $engine.ProcessId -ErrorAction SilentlyContinue)) { $problem = 'the engine kept running after the window was gone' }
@@ -84,7 +96,7 @@ jobs:
             Write-Host "${exe}: started, shows the engine's report, and the engine ends with it"
           }
           Get-ChildItem app | ForEach-Object { Write-Host "$($_.Name)  $([math]::Round($_.Length / 1MB, 1)) MB" }
-          Test-Start 'app\CADUAL4KDOCKPD-Patch-App.exe' 'window.png'
+          Test-Start 'app\CADUAL4KDOCKPD-Patch-App.exe' 'window.png' 'window-main.png'
           # A build for internal use gets a firmware image attached to the end of the exe, and people
           # rename files. Neither may stop the app from starting; stand-in bytes are enough to test that.
           New-Item -ItemType Directory other | Out-Null
@@ -99,6 +111,70 @@ jobs:
           $renamed = "$PWD\other\CADUAL4KDOCKPD Patch (1).exe"
           Copy-Item $attached $renamed
           Test-Start $renamed 'window-renamed.png'
+      - name: Take a picture of each step, from the engine output of serve.rs's demo test
+        shell: powershell
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing, UIAutomationClient, UIAutomationTypes
+          Add-Type -ReferencedAssemblies Accessibility -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          using Accessibility;
+          public static class Msaa {
+              [DllImport("oleacc.dll")]
+              static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint objectId, ref Guid iid, [MarshalAs(UnmanagedType.IUnknown)] out object accessible);
+              static IAccessible Of(IntPtr hwnd) {
+                  Guid iid = new Guid("618736E0-3C3D-11CF-810C-00AA00389B71");
+                  object accessible;
+                  AccessibleObjectFromWindow(hwnd, 0xFFFFFFFC, ref iid, out accessible);
+                  return (IAccessible)accessible;
+              }
+              public static int Role(IntPtr hwnd) { return Convert.ToInt32(Of(hwnd).get_accRole(0)); }
+              public static string Name(IntPtr hwnd) { return Of(hwnd).get_accName(0); }
+              public static void Press(IntPtr hwnd) { Of(hwnd).accDoDefaultAction(0); }
+          }
+          '@
+          $auto = [System.Windows.Automation.AutomationElement]
+          New-Item -ItemType Directory demo | Out-Null
+          $env:DOCK_DEMO_DIR = "$PWD\demo"
+          cargo test -- --ignored demo
+          # a debug build: only that one reads DOCK_UI_DEMO
+          cargo build --features window
+          foreach ($state in 'identify', 'patch', 'writing', 'failed', 'restart', 'test') {
+            $env:DOCK_UI_DEMO = "$PWD\demo\$state.jsonl"
+            $app = Start-Process -FilePath target\debug\cadual4kdockpd-patch.exe -PassThru
+            foreach ($second in 1..30) {
+              Start-Sleep -Seconds 1
+              $app.Refresh()
+              if ($app.HasExited -or $app.MainWindowHandle -ne 0) { break }
+            }
+            if ($app.HasExited) { Write-Host "FAILED: the window for $state exited with code $($app.ExitCode)"; exit 1 }
+            Start-Sleep -Seconds 2
+            if ($state -eq 'writing') {
+              # What a screen reader is told about each control, through MSAA as NVDA reads Win32
+              # controls; then the log box is opened the way a screen reader user would open it.
+              $roles = @{ 10 = 'client'; 40 = 'graphic'; 41 = 'text'; 42 = 'field'; 43 = 'button'; 44 = 'checkbox'; 48 = 'progress bar' }
+              $details = [IntPtr]::Zero
+              $auto::FromHandle($app.MainWindowHandle).FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object {
+                $hwnd = [IntPtr]$_.Current.NativeWindowHandle
+                if ($hwnd -eq [IntPtr]::Zero) { return }
+                $role = [Msaa]::Role($hwnd)
+                $name = [Msaa]::Name($hwnd)
+                $kind = $roles[$role]
+                if (-not $kind) { $kind = "role $role" }
+                Write-Host "  $kind`: $name"
+                if ($role -eq 43 -and $name -eq 'Show details') { $details = $hwnd }
+              }
+              if ($details -eq [IntPtr]::Zero) { Write-Host "FAILED: no button named Show details"; exit 1 }
+              [Msaa]::Press($details)
+              Start-Sleep -Seconds 1
+            }
+            $screen = [System.Windows.Forms.SystemInformation]::VirtualScreen
+            $picture = New-Object System.Drawing.Bitmap $screen.Width, $screen.Height
+            [System.Drawing.Graphics]::FromImage($picture).CopyFromScreen($screen.Location, [System.Drawing.Point]::Empty, $screen.Size)
+            $picture.Save("$PWD\window-step-$state.png")
+            Stop-Process -Id $app.Id -Force
+            Write-Host "pictured: $state"
+          }
       - uses: actions/upload-artifact@v7
         if: always()
         with:
