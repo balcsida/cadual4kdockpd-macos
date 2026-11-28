@@ -11,12 +11,13 @@ Windows. Why that helps on Macs, and the evidence: [`../dock-capture/REPORT.md`]
   an update method of its own that would survive this, but the dock gives the computer no way to use
   it in normal use: see "What TI's documents add" in
   [`PROTOCOL.md`](../dock-capture/gw-updater/PROTOCOL.md).
-- **Status of this tool.** The same sequence, sent by an earlier tool, patched one dock from macOS
-  (2026-11-25). This Rust version sends byte-for-byte the same data frames and passes its tests against
-  a model of the chip. Through the Mac app it patched a dock on 2026-11-27: written and verified on the
-  first attempt, and after the restart the dock came back on 3 replugs. It has not yet written a dock
-  from Windows: the Windows app is built and started on GitHub's Windows machines for every change (see
-  Packaging), but has not been used with a dock.
+- **Status of this tool.** As of 2026-11-27, five docks have been patched successfully. The same
+  sequence, sent by an earlier tool, patched one dock from macOS (2026-11-25). This Rust version sends
+  byte-for-byte the same data frames and passes its tests against a model of the chip. Through the Mac
+  app it patched a dock on 2026-11-27: written and verified on the first attempt, and after the restart
+  the dock came back on 3 replugs. It has not yet written a dock from Windows: the Windows app is built
+  and started on GitHub's Windows machines for every change (see Packaging), but has not been used with
+  a dock.
 - **What you gain and lose** is described in the report: the dock stops looping on Macs; charging then
   depends on the computer accepting a power-role swap about half a second after plug-in.
 - You do this at your own risk. Not affiliated with i-tec, Good Way, Texas Instruments or Cable Matters.
